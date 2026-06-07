@@ -3,21 +3,6 @@
  * Namespace: Hubitat Integrations
  * Version: B1.0
  *
- * Purpose:
- * - Save only the curated child-driver preparation table between app launches
- * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
- * - Cloud discovery updates the saved device table with labels, groups, products and capabilities
- * - LAN discovery updates the saved device table with local IPs by matching UID, including adjacent UID matching
- * - Source Cloud/LAN tables are runtime diagnostics only
- * - First four table columns aligned: UID, Label, IP address, Last seen
- * - Product is column 6 in curated/cloud tables; connected status is second-last
- * - LAN-only discovery can populate the saved device table when Cloud is unavailable
- * - Common table columns have aligned widths
- * - LAN Expected from Cloud column aligned to Status column width
- * - Simplified normal UI: token field, Discovery button, device table, Clear all Data button
- * - Cloud and LAN discovery run sequentially from one Discovery button
- * - Cloud/LAN diagnostic tables are hidden behind an Advanced button
- * - Child device creation uses saved per-device checkboxes, editable prefix, corrected driver assignment, LAN UID for child DNI, and protocol target UID for control
  */
 
 definition(
