@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "4.7.6",
+  "version": "B1.0",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-06-07",
-  "releaseNotes": "Assigns any IR-capable LIFX device to the Plus Colour driver and mirrors IR level to IRLevel/infraredLevel attributes. Preserves v4.7.4+ performance baseline.",
+  "releaseNotes": "Beta B1.0 release. Removes hard-coded LIFX Cloud token, keeps stable HPM filenames, and packages LIFX Light Manager for GitHub/HPM beta upload.",
   "apps": [
     {
       "id": "b1d8e580-6e6e-4e3f-934f-lifxlightmgr01",
