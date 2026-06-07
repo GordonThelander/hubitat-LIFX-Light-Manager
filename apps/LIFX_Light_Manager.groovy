@@ -6,15 +6,15 @@
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
- * - Cloud discovery updates the saved curated table with labels, groups, products and capabilities
- * - LAN discovery updates the saved curated table with local IPs by matching UID, including adjacent UID matching
+ * - Cloud discovery updates the saved device table with labels, groups, products and capabilities
+ * - LAN discovery updates the saved device table with local IPs by matching UID, including adjacent UID matching
  * - Source Cloud/LAN tables are runtime diagnostics only
  * - First four table columns aligned: UID, Label, IP address, Last seen
  * - Product is column 6 in curated/cloud tables; connected status is second-last
- * - LAN-only discovery can populate the saved curated table when Cloud is unavailable
+ * - LAN-only discovery can populate the saved device table when Cloud is unavailable
  * - Common table columns have aligned widths
  * - LAN Expected from Cloud column aligned to Status column width
- * - Simplified normal UI: token field, Discovery button, curated table, Clear all Data button
+ * - Simplified normal UI: token field, Discovery button, device table, Clear all Data button
  * - Cloud and LAN discovery run sequentially from one Discovery button
  * - Cloud/LAN diagnostic tables are hidden behind an Advanced button
  * - Child device creation uses saved per-device checkboxes, editable prefix, corrected driver assignment, LAN UID for child DNI, and protocol target UID for control
@@ -34,7 +34,7 @@
  * v4.7.7 assigns any IR-capable LIFX device to the Plus Colour driver and mirrors IR level to IRLevel/infraredLevel attributes.
  * v4.7.8 moves the LIFX Master Switch into the child creation list as an enabled-by-default item, applies the child prefix to its label, and updates discovery status text.
  * v4.7.9 keeps the Master Switch list entry unprefixed, still creates it with the optional prefix, and shows Discovery completed when the run finishes.
- * v4.8.2 sorts child creation by label, removes Curated from driver display names, auto-selects IP-change updates, and refreshes Master Switch membership after discovery and child updates.
+ * v4.8.2 sorts child creation by label, removes legacy driver wording from display names, auto-selects IP-change updates, and refreshes Master Switch membership after discovery and child updates.
  * v4.8.3 restores internal Hubitat driver definition names while keeping simplified driver display labels in the UI.
  * v4.8.4 corrects the app header version comment. No functional logic change from v4.8.3.
  * v4.8.5 reruns full LAN discovery from the Discovery button, adds Master Switch colour control, and applies colour only to colour-capable lights while non-colour lights receive the requested level.
@@ -46,7 +46,7 @@ definition(
     name: "LIFX Light Manager",
     namespace: "Hubitat Integrations",
     author: "Gordon Thelander",
-    description: "Maintains a saved curated LIFX device table from Cloud data and updates LAN IPs separately by UID matching.",
+    description: "Maintains a saved LIFX device table from Cloud data and updates LAN IPs separately by UID matching.",
     category: "Convenience",
     menu: "Integrations",
     iconUrl: "",
@@ -101,7 +101,7 @@ void renderMainPageContent(Boolean advanced) {
         input "discoverBtn", "button", title: "Discovery"
         input "childNamePrefix", "text",
             title: "Optional child device name prefix",
-            description: "Example: Lounge. Leave blank to use the curated Label exactly.",
+            description: "Example: Lounge. Leave blank to use the detected label exactly.",
             required: false,
             submitOnChange: false
 
@@ -127,7 +127,7 @@ void renderMainPageContent(Boolean advanced) {
             input "createSelectedChildrenBtn", "button", title: "Create / update selected child devices"
             input "createAllChildrenBtn", "button", title: "Create / update all listed child devices"
         } else {
-            paragraph "No creation-ready curated devices yet. Run Discovery first."
+            paragraph "No creation-ready devices yet. Run Discovery first."
         }
         input "clearAllBtn", "button", title: "Clear all Data"
         input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced"
@@ -149,7 +149,7 @@ void renderMainPageContent(Boolean advanced) {
         }
     }
 
-    section("Curated child-driver preparation table") {
+    section("Device preparation table") {
         paragraph curatedTableHtml()
     }
 
@@ -247,7 +247,7 @@ void startCloudDiscovery() {
     atomicState.stats = emptyStats()
     atomicState.status = "cloud"
     atomicState.discoveryMode = "cloud-led"
-    atomicState.phase = "Fetching LIFX Cloud devices and updating saved curated table"
+    atomicState.phase = "Fetching LIFX Cloud devices and updating saved device table"
     atomicState.cloudStatus = "retrieving"
     atomicState.curatedReady = true
     fetchCloudLights(true)
@@ -259,7 +259,7 @@ void startLanDiscovery() {
     atomicState.byIp = [:]
     atomicState.stats = emptyStats()
     atomicState.status = "starting-lan"
-    atomicState.phase = "Preparing LAN discovery from saved curated table"
+    atomicState.phase = "Preparing LAN discovery from saved device table"
     atomicState.curatedReady = true
     atomicState.started = now()
     atomicState.lastResponse = 0L
@@ -276,7 +276,7 @@ void startLanDiscovery() {
         stats.matched = 0
         stats.missing = 0
         atomicState.stats = stats
-        atomicState.phase = "No saved cloud curated table - LAN discovery will build LAN-only curated rows"
+        atomicState.phase = "No saved cloud device table - LAN discovery will build LAN-only curated rows"
         startInitialBroadcast()
         return
     }
@@ -292,7 +292,7 @@ void startLanDiscovery() {
 
     if (allExpectedFound() && atomicState.forceFullLanDiscovery != true) {
         atomicState.status = "complete"
-        atomicState.phase = "Saved curated table already has IP addresses for all rows"
+        atomicState.phase = "Saved device table already has IP addresses for all rows"
         return
     }
 
@@ -402,7 +402,7 @@ void fetchCloudLights(Boolean cloudOnly) {
                 startLanDiscovery()
             } else {
                 atomicState.status = "complete"
-                atomicState.phase = cloud.isEmpty() ? "No cloud lights returned" : "Cloud discovery complete - saved curated table updated"
+                atomicState.phase = cloud.isEmpty() ? "No cloud lights returned" : "Cloud discovery complete - saved device table updated"
                 atomicState.curatedReady = true
             }
         }
@@ -618,7 +618,7 @@ void clearSourceTables() {
     atomicState.expectedIds = [:]
     atomicState.stats = emptyStats()
     atomicState.status = "idle"
-    atomicState.phase = "Source tables cleared. Saved curated table retained."
+    atomicState.phase = "Source tables cleared. Saved device table retained."
     atomicState.cloudStatus = "not tested"
     atomicState.curatedReady = true
     state.sweepQueue = []
@@ -1177,7 +1177,7 @@ String childDniForRow(Map row) {
 }
 
 String driverTypeForRow(Map row) {
-    if (!row) return "LIFX Curated Local Unknown"
+    if (!row) return "LIFX Local Unknown"
 
     String cap = (row.capability ?: "").toString().toLowerCase()
     String mode = (row.driverMode ?: "").toString().toLowerCase()
@@ -1187,20 +1187,20 @@ String driverTypeForRow(Map row) {
     // v4.7.7: IR capability is authoritative. Any IR-capable light must use the
     // Plus driver so the infrared management command/attributes are available.
     Boolean ir = truthy(row.hasIr) || cap.contains("infrared") || cap.contains(" ir") || cap.endsWith("ir") || mode.endsWith("ir") || mode.contains("+ ir") || mode.contains("infrared")
-    if (ir) return "LIFX Curated Local Plus Colour"
+    if (ir) return "LIFX Local Plus Colour"
 
     // Product ID is the strongest local signal after explicit IR capability.
-    if (lanProduct in [10,11,18,19,51,61,66,82,85,87,88,100,101]) return "LIFX Curated Local White Mono"
-    if (lanProduct in [39,50,60,81,96]) return "LIFX Curated Local Tunable White"
-    if (lanProduct in [29,30,45,46,64,65,109,110,111]) return "LIFX Curated Local Plus Colour"
-    if (lanProduct in [1,3,20,22,27,28,36,37,40,43,44,49,52,57,59,62,63,68,91,92,93,94,97,98,99,112,130,182]) return "LIFX Curated Local Colour"
+    if (lanProduct in [10,11,18,19,51,61,66,82,85,87,88,100,101]) return "LIFX Local White Mono"
+    if (lanProduct in [39,50,60,81,96]) return "LIFX Local Tunable White"
+    if (lanProduct in [29,30,45,46,64,65,109,110,111]) return "LIFX Local Plus Colour"
+    if (lanProduct in [1,3,20,22,27,28,36,37,40,43,44,49,52,57,59,62,63,68,91,92,93,94,97,98,99,112,130,182]) return "LIFX Local Colour"
 
     // Product family is the next strongest signal. This prevents CT-only wording being
     // mistaken for RGB colour support.
     Boolean productTunableWhite = product.contains("day and dusk") || product.contains("white to warm") || product.contains("warm to white")
     Boolean productWhiteMono = product.contains("mini white") || product.contains("filament") || product.contains("white mono") || product.contains("white 800") || product.contains("white 900")
-    if (productWhiteMono) return "LIFX Curated Local White Mono"
-    if (productTunableWhite) return "LIFX Curated Local Tunable White"
+    if (productWhiteMono) return "LIFX Local White Mono"
+    if (productTunableWhite) return "LIFX Local Tunable White"
 
     Boolean hasRealColour = truthy(row.hasColor) ||
         cap.contains("colour light") || cap.contains("color light") ||
@@ -1216,10 +1216,10 @@ String driverTypeForRow(Map row) {
         mode.contains("colour temperature") || mode.contains("color temperature") ||
         mode.contains("+ ct")
 
-    if (hasRealColour && ir) return "LIFX Curated Local Plus Colour"
-    if (hasRealColour) return "LIFX Curated Local Colour"
-    if (ctOnly) return "LIFX Curated Local Tunable White"
-    return "LIFX Curated Local White Mono"
+    if (hasRealColour && ir) return "LIFX Local Plus Colour"
+    if (hasRealColour) return "LIFX Local Colour"
+    if (ctOnly) return "LIFX Local Tunable White"
+    return "LIFX Local White Mono"
 }
 
 
@@ -1230,7 +1230,7 @@ Boolean driverNamesEquivalent(String installedName, String expectedName) {
 }
 
 String normaliseDriverDisplayName(String value) {
-    return (value ?: "").toString().replace("LIFX Curated Local", "LIFX Local").trim()
+    return (value ?: "").toString().replace("LIFX Local", "LIFX Local").trim()
 }
 
 String installedDriverName(child) {
@@ -1906,7 +1906,7 @@ def parseChildLifx(response) {
             child.sendEvent(name: "infraredLevel", value: irLevel)
         }
     } catch (Throwable t) {
-        log.warn "LIFX Curated child parse error: ${t.message}"
+        log.warn "LIFX child parse error: ${t.message}"
     }
 }
 
@@ -1983,8 +1983,8 @@ String statusHtml() {
         "<b>Status:</b> ${html(atomicState.status ?: 'idle')}<br/>" +
         "<b>Cloud status:</b> ${html(atomicState.cloudStatus ?: 'not tested')}<br/>" +
         "<b>Saved curated rows:</b> ${stats.expected ?: 0}<br/>" +
-        "<b>Curated rows with IP:</b> ${stats.matched ?: 0} / ${stats.expected ?: 0}<br/>" +
-        "<b>Curated rows missing IP:</b> ${stats.missing ?: 0}<br/>" +
+        "<b>Device rows with IP:</b> ${stats.matched ?: 0} / ${stats.expected ?: 0}<br/>" +
+        "<b>Device rows missing IP:</b> ${stats.missing ?: 0}<br/>" +
         "<b>LAN-only devices:</b> ${stats.lanOnly ?: 0}<br/>" +
         "<b>First broadcast pulses:</b> ${stats.broadcastPulses ?: 0}<br/>" +
         "<b>Second broadcast pulses:</b> ${stats.secondBroadcastPulses ?: 0}<br/>" +
