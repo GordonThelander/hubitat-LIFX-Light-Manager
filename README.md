@@ -6,11 +6,12 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 
 ## What it does
 
-- Uses a LIFX Personal Access Token for discovery and metadata enrichment.
+- Uses a LIFX Personal Access Token for Cloud discovery and metadata enrichment.
 - Discovers LIFX lights on the local LAN and records their current IP addresses.
 - Maintains a curated preparation table showing label, IP address, group, product, capabilities and driver mode.
 - Handles Cloud ID to LAN UID mismatches, including the observed `cloud+1` case.
 - Creates Hubitat child devices for mono, tunable white, colour and Plus/IR-capable LIFX lights.
+- Once the local devices are created, they then work locally without the Internet 
 - Detects changed IP addresses and marks affected devices for update.
 - Updates child device data and visible current-state attributes after IP remediation.
 - Provides a **LIFX Master Switch** aggregate device for whole-fleet control.
