@@ -4,7 +4,7 @@
   "version": "B1.0",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-06-07",
-  "releaseNotes": "Beta B1.0 release. Removes hard-coded LIFX Cloud token, keeps stable HPM filenames, and packages LIFX Light Manager for GitHub/HPM beta upload.",
+  "releaseNotes": "LIFX Light Manager B1.0 beta release - July 2026. This is a functional work-in-progress beta release. Feedback, bug reports and testing across different LIFX device types are appreciated."
   "apps": [
     {
       "id": "b1d8e580-6e6e-4e3f-934f-lifxlightmgr01",
