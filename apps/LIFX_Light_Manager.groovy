@@ -18,29 +18,6 @@
  * - Cloud and LAN discovery run sequentially from one Discovery button
  * - Cloud/LAN diagnostic tables are hidden behind an Advanced button
  * - Child device creation uses saved per-device checkboxes, editable prefix, corrected driver assignment, LAN UID for child DNI, and protocol target UID for control
- *
- * This branch hardens child-device LAN control using the lifxlan reference model:
- * - GET messages request responses
- * - SET messages request acknowledgements
- * - command packets use targeted LAN UID/MAC frames
- * - set colour payload follows reserved byte + HSBK + duration
- * - set power payload follows power level + duration
- * - refresh uses LIGHT.GET, LIGHT.GET_POWER and optional LIGHT.GET_INFRARED
- * Cloud is used only for discovery/enrichment. Control is local LAN UDP.
- * v4.7.1 changes fast on/off to original-style IP-directed zero-target UDP packets with no ACK/response, while retaining v4.7.0 table widths.
- * v4.7.3 moves individual child on/off to the same original-style child-direct UDP send path and removes blocking inline refresh after SET commands.
- * v4.7.4 keeps the app logic aligned and pairs with v1.1.6 drivers that remove disallowed java.lang.System.currentTimeMillis() usage.
- * v4.7.5 renames the app to LIFX Light Manager and the aggregate fast group driver/device to LIFX Master Switch.
- * v4.7.7 assigns any IR-capable LIFX device to the Plus Colour driver and mirrors IR level to IRLevel/infraredLevel attributes.
- * v4.7.8 moves the LIFX Master Switch into the child creation list as an enabled-by-default item, applies the child prefix to its label, and updates discovery status text.
- * v4.7.9 keeps the Master Switch list entry unprefixed, still creates it with the optional prefix, and shows Discovery completed when the run finishes.
- * v4.8.2 sorts child creation by label, removes legacy driver wording from display names, auto-selects IP-change updates, and refreshes Master Switch membership after discovery and child updates.
- * v4.8.3 restores internal Hubitat driver definition names while keeping simplified driver display labels in the UI.
- * v4.8.4 corrects the app header version comment. No functional logic change from v4.8.3.
- * v4.8.5 reruns full LAN discovery from the Discovery button, adds Master Switch colour control, and applies colour only to colour-capable lights while non-colour lights receive the requested level.
- * v4.8.6 immediately syncs child runtime attributes after IP/data-value updates so the Commands page current state reflects the new LAN IP without requiring Initialize.
- * B1.0 beta release removes the hard-coded Cloud token and prepares the package for GitHub/HPM beta distribution.
- * B1.1 adds LIFX token acquisition guidance, validates the token before discovery, and improves token setting persistence.
  */
 
 definition(
