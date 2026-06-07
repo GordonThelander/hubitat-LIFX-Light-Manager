@@ -1,0 +1,56 @@
+{
+  "packageName": "LIFX Light Manager",
+  "author": "Gordon Thelander",
+  "version": "4.7.5",
+  "minimumHEVersion": "2.3.0",
+  "dateReleased": "2026-06-07",
+  "releaseNotes": "Renamed app to LIFX Light Manager and renamed Fast Group to LIFX Master Switch. Preserves v4.7.4 performance baseline.",
+  "apps": [
+    {
+      "id": "b1d8e580-6e6e-4e3f-934f-lifxlightmgr01",
+      "name": "LIFX Light Manager",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-lifx-light-manager/main/apps/LIFX_Light_Manager.groovy",
+      "required": true,
+      "oauth": false,
+      "primary": true
+    }
+  ],
+  "drivers": [
+    {
+      "id": "b1d8e580-6e6e-4e3f-934f-lifxmono001",
+      "name": "LIFX Curated Local White Mono",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-lifx-light-manager/main/drivers/LIFX_Curated_Local_White_Mono_Driver.groovy",
+      "required": true
+    },
+    {
+      "id": "b1d8e580-6e6e-4e3f-934f-lifxtunable1",
+      "name": "LIFX Curated Local Tunable White",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/hubitat-lifx-light-manager/main/drivers/LIFX_Curated_Local_Tunable_White_Driver.groovy",
+      "required": true
+    },
+    {
+      "id": "b1d8e580-6e6e-4e3f-934f-lifxcolour01",
+      "name": "LIFX Curated Local Colour",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-lifx-light-manager/main/drivers/LIFX_Curated_Local_Colour_Driver.groovy",
+      "required": true
+    },
+    {
+      "id": "b1d8e580-6e6e-4e3f-934f-lifxplus001",
+      "name": "LIFX Curated Local Plus Colour",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-lifx-light-manager/main/drivers/LIFX_Curated_Local_Plus_Colour_Driver.groovy",
+      "required": true
+    },
+    {
+      "id": "b1d8e580-6e6e-4e3f-934f-lifxmaster01",
+      "name": "LIFX Master Switch",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-lifx-light-manager/main/drivers/LIFX_Master_Switch_Driver.groovy",
+      "required": true
+    }
+  ]
+}
