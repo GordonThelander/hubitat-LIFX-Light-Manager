@@ -40,6 +40,7 @@
  * v4.8.5 reruns full LAN discovery from the Discovery button, adds Master Switch colour control, and applies colour only to colour-capable lights while non-colour lights receive the requested level.
  * v4.8.6 immediately syncs child runtime attributes after IP/data-value updates so the Commands page current state reflects the new LAN IP without requiring Initialize.
  * B1.0 beta release removes the hard-coded Cloud token and prepares the package for GitHub/HPM beta distribution.
+ * B1.1 adds LIFX token acquisition guidance, validates the token before discovery, and improves token setting persistence.
  */
 
 definition(
@@ -93,11 +94,15 @@ def mainPage(params = null) {
 
 void renderMainPageContent(Boolean advanced) {
     section("LIFX discovery") {
+        paragraph "Go to <a href='https://cloud.lifx.com/' target='_blank'>https://cloud.lifx.com/</a>, log in using your LIFX credentials, then use the top-right account menu to acquire a Personal Access Token. Paste that token below before running Discovery."
         input "lifxCloudToken", "string",
             title: "LIFX Personal Access Token",
             defaultValue: "",
             required: false,
-            submitOnChange: false
+            submitOnChange: true
+        if (atomicState.tokenError) {
+            paragraph "<div style='font-weight:bold;color:#cc0000'>${atomicState.tokenError}</div>"
+        }
         input "discoverBtn", "button", title: "Discovery"
         input "childNamePrefix", "text",
             title: "Optional child device name prefix",
@@ -202,6 +207,16 @@ void toggleAdvanced() {
 
 void startCombinedDiscovery() {
     unschedule()
+    String token = configuredLifxCloudToken()
+    if (!token) {
+        atomicState.status = "idle"
+        atomicState.phase = "Discovery not started"
+        atomicState.tokenError = "LIFX Personal Access Token is required before Discovery can run. Go to https://cloud.lifx.com/, log in with your LIFX credentials, then use the top-right account menu to acquire a Personal Access Token."
+        atomicState.lastDiscoveryStatus = atomicState.tokenError
+        log.warn atomicState.tokenError
+        return
+    }
+    atomicState.tokenError = null
     atomicState.runLanAfterCloud = true
     atomicState.forceFullLanDiscovery = true
     atomicState.records = [:]
