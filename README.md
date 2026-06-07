@@ -6,12 +6,11 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 
 ## What it does
 
-- Uses a LIFX Personal Access Token for Cloud discovery and metadata enrichment.
+- Uses a LIFX Personal Access Token for discovery and metadata enrichment.
 - Discovers LIFX lights on the local LAN and records their current IP addresses.
-- Maintains a curated preparation table showing label, IP address, group, product, capabilities and driver mode.
+- Maintains a device preparation table showing label, IP address, group, product, capabilities and driver mode.
 - Handles Cloud ID to LAN UID mismatches, including the observed `cloud+1` case.
 - Creates Hubitat child devices for mono, tunable white, colour and Plus/IR-capable LIFX lights.
-- Once the local devices are created, they then work locally without the Internet 
 - Detects changed IP addresses and marks affected devices for update.
 - Updates child device data and visible current-state attributes after IP remediation.
 - Provides a **LIFX Master Switch** aggregate device for whole-fleet control.
@@ -26,10 +25,10 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 
 ### Drivers
 
-- `drivers/LIFX_Curated_Local_White_Mono_Driver.groovy`
-- `drivers/LIFX_Curated_Local_Tunable_White_Driver.groovy`
-- `drivers/LIFX_Curated_Local_Colour_Driver.groovy`
-- `drivers/LIFX_Curated_Local_Plus_Colour_Driver.groovy`
+- `drivers/LIFX_Local_White_Mono_Driver.groovy`
+- `drivers/LIFX_Local_Tunable_White_Driver.groovy`
+- `drivers/LIFX_Local_Colour_Driver.groovy`
+- `drivers/LIFX_Local_Plus_Colour_Driver.groovy`
 - `drivers/LIFX_Master_Switch_Driver.groovy`
 
 The filenames are intentionally stable for HPM. Versioning is handled in `packageManifest.json` and in the file comments.
@@ -46,10 +45,10 @@ Recommended repository layout:
 
 ```text
 apps/LIFX_Light_Manager.groovy
-drivers/LIFX_Curated_Local_White_Mono_Driver.groovy
-drivers/LIFX_Curated_Local_Tunable_White_Driver.groovy
-drivers/LIFX_Curated_Local_Colour_Driver.groovy
-drivers/LIFX_Curated_Local_Plus_Colour_Driver.groovy
+drivers/LIFX_Local_White_Mono_Driver.groovy
+drivers/LIFX_Local_Tunable_White_Driver.groovy
+drivers/LIFX_Local_Colour_Driver.groovy
+drivers/LIFX_Local_Plus_Colour_Driver.groovy
 drivers/LIFX_Master_Switch_Driver.groovy
 packageManifest.json
 README.md
@@ -120,7 +119,7 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 ## Attribution
 
-This project was developed after reviewing the original **LIFX Master** Hubitat integration by Robert Alan Heyes. It uses similar LIFX LAN protocol concepts, particularly around local UDP command dispatch, while adding a new cloud-assisted curated discovery workflow and Master Switch management model.
+This project was developed after reviewing the original **LIFX Master** Hubitat integration by Robert Alan Heyes. It uses similar LIFX LAN protocol concepts, particularly around local UDP command dispatch, while adding a new cloud-assisted device discovery workflow and Master Switch management model.
 
 ## Status
 
