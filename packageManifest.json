@@ -28,7 +28,7 @@
       "id": "b1d8e580-6e6e-4e3f-934f-lifxtunable1",
       "name": "LIFX Curated Local Tunable White",
       "namespace": "Hubitat Integrations",
-      "location": "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/hubitat-lifx-light-manager/main/drivers/LIFX_Curated_Local_Tunable_White_Driver.groovy",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-lifx-light-manager/main/drivers/LIFX_Curated_Local_Tunable_White_Driver.groovy",
       "required": true
     },
     {
