@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 4.7.5
+ * Version: 4.7.6
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -31,6 +31,7 @@
  * v4.7.3 moves individual child on/off to the same original-style child-direct UDP send path and removes blocking inline refresh after SET commands.
  * v4.7.4 keeps the app logic aligned and pairs with v1.1.6 drivers that remove disallowed java.lang.System.currentTimeMillis() usage.
  * v4.7.5 renames the app to LIFX Light Manager and the aggregate fast group driver/device to LIFX Master Switch.
+ * v4.7.6 assigns any IR-capable LIFX device to the Plus Colour driver and mirrors IR level to IRLevel/infraredLevel attributes.
  */
 
 definition(
@@ -1054,7 +1055,12 @@ String driverTypeForRow(Map row) {
     String product = (row.productName ?: row.productIdentifier ?: "").toString().toLowerCase()
     Integer lanProduct = safeInt(row.lanProduct ?: row.productId ?: row.product)
 
-    // Product ID is the strongest local signal. Apply it before capability wording.
+    // v4.7.6: IR capability is authoritative. Any IR-capable light must use the
+    // Plus driver so the infrared management command/attributes are available.
+    Boolean ir = truthy(row.hasIr) || cap.contains("infrared") || cap.contains(" ir") || cap.endsWith("ir") || mode.endsWith("ir") || mode.contains("+ ir") || mode.contains("infrared")
+    if (ir) return "LIFX Curated Local Plus Colour"
+
+    // Product ID is the strongest local signal after explicit IR capability.
     if (lanProduct in [10,11,18,19,51,61,66,82,85,87,88,100,101]) return "LIFX Curated Local White Mono"
     if (lanProduct in [39,50,60,81,96]) return "LIFX Curated Local Tunable White"
     if (lanProduct in [29,30,45,46,64,65,109,110,111]) return "LIFX Curated Local Plus Colour"
@@ -1066,8 +1072,6 @@ String driverTypeForRow(Map row) {
     Boolean productWhiteMono = product.contains("mini white") || product.contains("filament") || product.contains("white mono") || product.contains("white 800") || product.contains("white 900")
     if (productWhiteMono) return "LIFX Curated Local White Mono"
     if (productTunableWhite) return "LIFX Curated Local Tunable White"
-
-    Boolean ir = truthy(row.hasIr) || cap.contains("infrared") || cap.contains(" ir") || cap.endsWith("ir") || mode.endsWith("ir") || mode.contains("+ ir")
 
     Boolean hasRealColour = truthy(row.hasColor) ||
         cap.contains("colour light") || cap.contains("color light") ||
@@ -1504,6 +1508,7 @@ void childSetInfraredLevel(device, value) {
     Integer level = clampInt(safeInt(value) ?: 0, 0, 100)
     sendLifxToRow(row, 122, u16le(scalePercentToLifx(level)), true, false, "parseChildLifx", 1, 0) // LIGHT.SET_INFRARED, ack requested
     try { device.sendEvent(name: "IRLevel", value: level) } catch (Throwable ignored) { }
+    try { device.sendEvent(name: "infraredLevel", value: level) } catch (Throwable ignored) { }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
@@ -1598,7 +1603,9 @@ def parseChildLifx(response) {
             child.sendEvent(name: "switch", value: power > 0 ? "on" : "off")
         } else if ((parsed.type as Integer) == 121) {
             Integer ir = leU16(parsed.payloadHex, 0)
-            child.sendEvent(name: "IRLevel", value: scaleDown100(ir))
+            Integer irLevel = scaleDown100(ir)
+            child.sendEvent(name: "IRLevel", value: irLevel)
+            child.sendEvent(name: "infraredLevel", value: irLevel)
         }
     } catch (Throwable t) {
         log.warn "LIFX Curated child parse error: ${t.message}"
@@ -1873,9 +1880,9 @@ String cloudCapability(Map c) {
     String product = (c.productName ?: c.productIdentifier ?: "").toString().toLowerCase()
     if (product.contains("day and dusk") || product.contains("white to warm") || product.contains("warm to white")) return "Tunable white light"
     if (product.contains("mini white") || product.contains("filament") || product.contains("white mono")) return "White mono light"
+    if (truthy(c.hasIr)) return "Colour light with infrared"
     if (truthy(c.hasMatrix)) return "Matrix/tile colour light"
     if (truthy(c.hasMultizone) || truthy(c.hasChain)) return "Multizone colour light"
-    if (truthy(c.hasColor) && truthy(c.hasIr)) return "Colour light with infrared"
     if (truthy(c.hasColor)) return "Colour light"
     if (truthy(c.hasVariableColorTemp)) return "Tunable white light"
     return "White mono light"
@@ -1886,9 +1893,9 @@ String cloudDriverMode(Map c) {
     String product = (c.productName ?: c.productIdentifier ?: "").toString().toLowerCase()
     if (product.contains("day and dusk") || product.contains("white to warm") || product.contains("warm to white")) return "Switch + level + colour temperature"
     if (product.contains("mini white") || product.contains("filament") || product.contains("white mono")) return "Switch + level"
+    if (truthy(c.hasIr)) return "Switch + level + colour + CT + IR"
     if (truthy(c.hasMatrix)) return "Tile/matrix driver later; basic colour fallback"
     if (truthy(c.hasMultizone) || truthy(c.hasChain)) return "Multizone driver later; basic colour fallback"
-    if (truthy(c.hasColor) && truthy(c.hasIr)) return "Switch + level + colour + CT + IR"
     if (truthy(c.hasColor)) return "Switch + level + colour + CT"
     if (truthy(c.hasVariableColorTemp)) return "Switch + level + colour temperature"
     return "Switch + level"
