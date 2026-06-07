@@ -1,7 +1,7 @@
 /*
- * LIFX Curated Local White Mono
+ * LIFX Local White Mono
  * Namespace: Hubitat Integrations
- * Version: 1.1.6
+ * Version: B1.0
  * Parent app: LIFX Curated Cloud Curated Locator v4.7.4+
  * LAN command handling is delegated to the parent app, which follows the lifxlan packet/workflow model.
  */

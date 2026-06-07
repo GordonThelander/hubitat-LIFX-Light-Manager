@@ -1,8 +1,8 @@
 /*
- * LIFX Curated Local Plus Colour
+ * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: 1.1.6
- * Parent app: LIFX Curated Cloud Curated Locator v4.7.4+
+ * Version: B1.0
+ * Parent app: LIFX Light Manager v4.7.6+
  */
 metadata {
     definition(name: "LIFX Curated Local Plus Colour", namespace: "Hubitat Integrations", author: "Gordon Thelander") {
@@ -19,7 +19,9 @@ metadata {
         attribute "uid", "string"
         attribute "lanIp", "string"
         attribute "IRLevel", "number"
+        attribute "infraredLevel", "number"
         command "setInfraredLevel", [[name: "Level", type: "NUMBER"]]
+        command "setIRLevel", [[name: "Level", type: "NUMBER"]]
     }
     preferences {
         input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, required: false
@@ -130,3 +132,4 @@ def setColor(Map value) { parent.childSetColor(device, value ?: [:], 0) }
 def setHue(value) { parent.childSetHue(device, value) }
 def setSaturation(value) { parent.childSetSaturation(device, value) }
 def setInfraredLevel(value) { parent.childSetInfraredLevel(device, value) }
+def setIRLevel(value) { parent.childSetInfraredLevel(device, value) }
