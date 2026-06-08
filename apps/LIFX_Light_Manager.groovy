@@ -3,6 +3,19 @@
  * Namespace: Hubitat Integrations
  * Version: B1.0
  *
+ * Purpose:
+ * - Save only the curated child-driver preparation table between app launches
+ * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
+ * - Cloud discovery updates the saved device table with labels, groups, products and capabilities
+ * - LAN discovery updates the saved device table with local IPs by matching UID, including adjacent UID matching
+ * - Source Cloud/LAN tables are runtime diagnostics only
+ * - First four table columns aligned: UID, Label, IP address, Last seen
+ * - LAN-only discovery can populate the saved device table when Cloud is unavailable
+ * - Simplified normal UI: token field, Discovery button, device table, Clear all Data button
+ * - Cloud and LAN discovery run sequentially from one Discovery button
+ * - Cloud/LAN diagnostic tables are hidden behind an Advanced button
+ * - Child device creation uses saved per-device checkboxes, editable prefix, corrected driver assignment, LAN UID for child DNI, and protocol target UID for control
+ *
  */
 
 definition(
@@ -149,7 +162,7 @@ void initialiseState() {
     if (atomicState.showAdvanced == null) atomicState.showAdvanced = false
     if (atomicState.childCreateResult == null) atomicState.childCreateResult = ""
     if (lifxCloudToken == null) app.updateSetting("lifxCloudToken", [type: "string", value: ""])
-    if (fastGroupName == null) app.updateSetting("fastGroupName", [type: "text", value: "LIFX Master Switch"])
+    if (fastGroupName == null) app.updateSetting("fastGroupName", [type: "text", value: "LIFX MASTER SWITCH"])
     try { app.updateSetting(masterSwitchSelectSettingName(), [type: "bool", value: true]) } catch (Throwable ignored) { }
 }
 
@@ -1043,7 +1056,7 @@ Boolean childSelectDefault(String uidValue) {
 }
 
 String childCreationActionHtml() {
-    return "Tick one or more devices. Each tick is saved immediately, then click Create / update selected child devices. Use the all-listed button only when you intentionally want every listed device created or updated. The LIFX Master Switch appears at the bottom of this list and is enabled by default as the aggregate control device."
+    return "Tick one or more devices. Each tick is saved immediately, then click Create / update selected child devices. Use the all-listed button only when you intentionally want every listed device created or updated. The LIFX MASTER SWITCH appears at the bottom of this list and is enabled by default as the aggregate control device."
 }
 
 String masterSwitchSelectSettingName() {
@@ -1052,7 +1065,7 @@ String masterSwitchSelectSettingName() {
 
 String masterSwitchListEntryTitle() {
     String status = getChildDevice(fastGroupDni()) ? "installed" : "not installed"
-    return "LIFX Master Switch - provides overall control of all the above LIFX lights - ${status}".toString()
+    return "LIFX MASTER SWITCH - provides overall control of all the above LIFX lights - ${status}".toString()
 }
 
 Boolean isMasterSwitchSelected() {
@@ -1344,7 +1357,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
         String before = childResult
         createOrUpdateFastGroupChildDevice()
         refreshMasterSwitchMembership()
-        childResult = before + "<br/><br/><b>Master Switch</b><br/>" + (atomicState.childCreateResult ?: "Created/updated LIFX Master Switch")
+        childResult = before + "<br/><br/><b>LIFX MASTER SWITCH</b><br/>" + (atomicState.childCreateResult ?: "Created/updated LIFX MASTER SWITCH")
     } else {
         refreshMasterSwitchMembership()
     }
@@ -1418,7 +1431,7 @@ String fastGroupDni() {
 
 String fastGroupLabel() {
     String prefix = (childNamePrefix ?: "").toString().trim()
-    return prefix ? "${prefix} LIFX Master Switch".toString() : "LIFX Master Switch"
+    return prefix ? "${prefix} LIFX MASTER SWITCH".toString() : "LIFX MASTER SWITCH"
 }
 
 void createOrUpdateFastGroupChildDevice() {
@@ -1433,7 +1446,7 @@ void createOrUpdateFastGroupChildDevice() {
             try { existing.updateDataValue("groupMode", "fast-bulk") } catch (Throwable ignored) { }
             try { existing.updateDataValue("managedBy", "LIFX Light Manager") } catch (Throwable ignored) { }
             refreshMasterSwitchMembership(existing)
-            atomicState.childCreateResult = "Updated LIFX Master Switch device: ${html(label)}"
+            atomicState.childCreateResult = "Updated LIFX MASTER SWITCH device: ${html(label)}"
             return
         }
         addChildDevice(
@@ -1448,23 +1461,107 @@ void createOrUpdateFastGroupChildDevice() {
             ]
         )
         refreshMasterSwitchMembership()
-        atomicState.childCreateResult = "Created LIFX Master Switch device: ${html(label)}"
+        atomicState.childCreateResult = "Created LIFX MASTER SWITCH device: ${html(label)}"
     } catch (com.hubitat.app.exception.UnknownDeviceTypeException e) {
         atomicState.childCreateResult = "LIFX Master Switch driver is not installed: ${html(driverType)}"
     } catch (Throwable t) {
-        atomicState.childCreateResult = "Failed to create LIFX Master Switch: ${html(safeMessage(t.message))}"
+        atomicState.childCreateResult = "Failed to create LIFX MASTER SWITCH: ${html(safeMessage(t.message))}"
     }
 }
 
-List<Map> bulkControlRows() {
-    Map curated = atomicState.curatedRows ?: [:]
-    if (!curated) return []
+List<String> managedLifxDriverNames() {
+    return [
+        "LIFX Local White Mono",
+        "LIFX Local Tunable White",
+        "LIFX Local Colour",
+        "LIFX Local Plus Colour"
+    ]
+}
 
-    // Master Switch membership reflects installed managed child devices, not merely all discovered rows.
-    // This keeps aggregate control aligned when child devices are added or deleted.
-    return curated.values()
-        .collect { it as Map }
-        .findAll { row -> rowReadyForChild(row as Map) && getChildDevice(childDniForRow(row as Map)) != null }
+String childDataValue(child, String key) {
+    if (!child || !key) return ""
+    try { return child.getDataValue(key)?.toString() ?: "" } catch (Throwable ignored) { }
+    return ""
+}
+
+Boolean isManagedLifxLightChild(child) {
+    if (!child) return false
+    String dni = ""
+    String type = ""
+    try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
+    if (dni == fastGroupDni()) return false
+    try { type = child.typeName?.toString() ?: "" } catch (Throwable ignored) { }
+    if (!type) type = childDataValue(child, "driverType")
+    return managedLifxDriverNames().contains(type)
+}
+
+List managedLifxLightChildren() {
+    return getChildDevices()
+        .findAll { child -> isManagedLifxLightChild(child) }
+        .sort { a, b ->
+            String al = ""
+            String bl = ""
+            try { al = a.displayName?.toString()?.toLowerCase() ?: "" } catch (Throwable ignored) { }
+            try { bl = b.displayName?.toString()?.toLowerCase() ?: "" } catch (Throwable ignored) { }
+            return al <=> bl
+        }
+}
+
+Map rowForManagedChild(child) {
+    if (!child) return [:]
+
+    Map row = rowForChild(child) ?: [:]
+
+    // Rebuild from the child device itself so the Master Switch never depends on a stale
+    // creation-time cache. This is important when lights are added after the Master Switch
+    // was first created, or if the Master Switch is deleted and recreated later.
+    String dni = ""
+    String type = ""
+    String label = ""
+    try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
+    try { type = child.typeName?.toString() ?: "" } catch (Throwable ignored) { }
+    try { label = child.displayName?.toString() ?: "" } catch (Throwable ignored) { }
+
+    String uidFromDni = dni.startsWith("lifx-curated-") ? dni.replaceFirst("lifx-curated-", "") : dni
+    String lanUid = normalisedUid(childDataValue(child, "lanUid") ?: childDataValue(child, "uid") ?: uidFromDni)
+    String controlUid = normalisedUid(childDataValue(child, "controlUid") ?: childDataValue(child, "protocolTargetUid") ?: childDataValue(child, "cloudUid") ?: lanUid)
+
+    row.label = row.label ?: childDataValue(child, "label") ?: label
+    row.ip = childDataValue(child, "ip") ?: row.ip
+    row.port = childDataValue(child, "port") ?: row.port ?: 56700
+    row.lanUid = row.lanUid ?: lanUid
+    row.uid = row.uid ?: lanUid
+    row.id = row.id ?: childDataValue(child, "cloudUid") ?: lanUid
+    row.cloudUid = row.cloudUid ?: childDataValue(child, "cloudUid")
+    row.controlUid = row.controlUid ?: controlUid
+    row.protocolTargetUid = row.protocolTargetUid ?: controlUid
+    row.productName = row.productName ?: childDataValue(child, "productName")
+    row.productIdentifier = row.productIdentifier ?: childDataValue(child, "productIdentifier")
+    row.capability = row.capability ?: childDataValue(child, "capability")
+    row.driverMode = row.driverMode ?: childDataValue(child, "driverMode")
+    row.hasColor = row.hasColor ?: childDataValue(child, "hasColor")
+    row.hasVariableColorTemp = row.hasVariableColorTemp ?: childDataValue(child, "hasVariableColorTemp")
+    row.hasIr = row.hasIr ?: childDataValue(child, "hasIr")
+    row.minKelvin = row.minKelvin ?: childDataValue(child, "minKelvin")
+    row.maxKelvin = row.maxKelvin ?: childDataValue(child, "maxKelvin")
+    row.childDni = dni
+    row.childDriver = type ?: childDataValue(child, "driverType")
+
+    return row
+}
+
+String childDniForBulkRow(Map row) {
+    String dni = row?.childDni?.toString() ?: ""
+    return dni ?: childDniForRow(row)
+}
+
+List<Map> bulkControlRows() {
+    // Authoritative source is the current installed child-device list, not atomicState.curatedRows.
+    // This ensures LIFX MASTER SWITCH includes all installed lights, including devices added
+    // after initial Master Switch creation and after Master Switch recreation.
+    return managedLifxLightChildren()
+        .collect { child -> rowForManagedChild(child) as Map }
+        .findAll { row -> row && (row.ip ?: '').toString().trim() && lanUidForRow(row as Map) }
         .sort { a, b -> compareUid(lanUidForRow(a as Map), lanUidForRow(b as Map)) }
 }
 
@@ -1475,7 +1572,7 @@ void refreshMasterSwitchMembership(masterDevice = null) {
     Integer total = rows.size()
     Integer onCount = 0
     rows.each { row ->
-        def child = getChildDevice(childDniForRow(row as Map))
+        def child = getChildDevice(childDniForBulkRow(row as Map))
         try { if (child?.currentValue('switch') == 'on') onCount++ } catch (Throwable ignored) { }
     }
     try { dev.updateDataValue("memberCount", total.toString()) } catch (Throwable ignored) { }
@@ -1537,7 +1634,7 @@ void groupChildRefresh(device) {
     Integer total = rows.size()
     Integer onCount = 0
     rows.each { row ->
-        def child = getChildDevice(childDniForRow(row as Map))
+        def child = getChildDevice(childDniForBulkRow(row as Map))
         try { if (child?.currentValue('switch') == 'on') onCount++ } catch (Throwable ignored) { }
     }
     try {
@@ -1567,7 +1664,7 @@ void sendBulkSetPower(Integer power, Integer durationMs = 0) {
 
     String sw = (power ?: 0) > 0 ? "on" : "off"
     rows.each { row ->
-        def child = getChildDevice(childDniForRow(row as Map))
+        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try { child.sendEvent(name: "switch", value: sw) } catch (Throwable ignored) { }
             if ((power ?: 0) == 0) {
@@ -1588,7 +1685,7 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
         sendFastSetToRow(row, 102, payload)
     }
     rows.each { row ->
-        def child = getChildDevice(childDniForRow(row as Map))
+        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
                 child.sendEvent(name: "level", value: level)
@@ -1601,7 +1698,7 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
 Boolean rowIsColourCapable(Map row) {
     if (!row) return false
     if (truthy(row.hasColor)) return true
-    String driver = driverTypeForRow(row).toLowerCase()
+    String driver = (row.childDriver ?: driverTypeForRow(row)).toString().toLowerCase()
     String cap = (row.capability ?: '').toString().toLowerCase()
     String mode = (row.driverMode ?: '').toString().toLowerCase()
     return driver.contains('colour') && !driver.contains('white') ||
@@ -1626,7 +1723,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
         sendFastSetToRow(row, 102, payload)
     }
     rows.each { row ->
-        def child = getChildDevice(childDniForRow(row as Map))
+        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
                 if (rowIsColourCapable(row as Map)) {
@@ -1653,7 +1750,7 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
         sendFastSetToRow(row, 102, payload)
     }
     rows.each { row ->
-        def child = getChildDevice(childDniForRow(row as Map))
+        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
                 child.sendEvent(name: "colorTemperature", value: clampKelvin(row as Map, kelvin ?: 3000))
