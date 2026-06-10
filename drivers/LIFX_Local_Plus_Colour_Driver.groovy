@@ -1,13 +1,17 @@
 /*
  * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: B1.1
- * Parent app: LIFX Light Manager v4.7.6+
+ * Version: B1.2.2
+ * Parent app: LIFX Light Manager B1.2+
+ * Google Home compatibility notes:
+ * - Exposes only standard Hubitat light capabilities for this device type.
+ * - Custom metadata is kept as attributes only and should not map to Google traits.
  */
 metadata {
     definition(name: "LIFX Local Plus Colour", namespace: "Hubitat Integrations", author: "Gordon Thelander") {
         capability "Actuator"
         capability "Switch"
+        capability "Light"
         capability "SwitchLevel"
         capability "ColorControl"
         capability "ColorTemperature"
@@ -18,6 +22,7 @@ metadata {
         attribute "label", "string"
         attribute "uid", "string"
         attribute "lanIp", "string"
+        attribute "colorName", "string"
         attribute "hostFirmware", "string"
         attribute "hostFirmwareBuild", "string"
         attribute "IRLevel", "number"
@@ -37,7 +42,20 @@ def initialize() {
     try { sendEvent(name: "lanIp", value: getDataValue('ip') ?: '') } catch (Throwable ignored) { }
     try { sendEvent(name: "hostFirmware", value: getDataValue('hostFirmware') ?: '') } catch (Throwable ignored) { }
     try { sendEvent(name: "hostFirmwareBuild", value: getDataValue('hostFirmwareBuild') ?: '') } catch (Throwable ignored) { }
+    initialiseGoogleSafeState()
     try { refresh() } catch (Throwable ignored) { }
+}
+
+private void initialiseGoogleSafeState() {
+    try { if (device.currentValue("switch") == null) sendEvent(name: "switch", value: "off", displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("level") == null) sendEvent(name: "level", value: 100, displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("colorTemperature") == null) sendEvent(name: "colorTemperature", value: 3500, displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("hue") == null) sendEvent(name: "hue", value: 0, displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("saturation") == null) sendEvent(name: "saturation", value: 0, displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("colorMode") == null) sendEvent(name: "colorMode", value: "CT", displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("colorName") == null) sendEvent(name: "colorName", value: "Soft White", displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("IRLevel") == null) sendEvent(name: "IRLevel", value: 0, displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("infraredLevel") == null) sendEvent(name: "infraredLevel", value: 0, displayed: false) } catch (Throwable ignored) { }
 }
 def poll() { refresh() }
 def refresh() { parent.childRefresh(device) }

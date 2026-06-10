@@ -1,14 +1,18 @@
 /*
  * LIFX Local White Mono
  * Namespace: Hubitat Integrations
- * Version: B1.1
- * Parent app: LIFX Light Manager B1.0+
+ * Version: B1.2.2
+ * Parent app: LIFX Light Manager B1.2+
+ * Google Home compatibility notes:
+ * - Exposes only standard Hubitat light capabilities for this device type.
+ * - Custom metadata is kept as attributes only and should not map to Google traits.
  * LAN command handling is delegated to the parent app, which follows the lifxlan packet/workflow model.
  */
 metadata {
     definition(name: "LIFX Local White Mono", namespace: "Hubitat Integrations", author: "Gordon Thelander") {
         capability "Actuator"
         capability "Switch"
+        capability "Light"
         capability "SwitchLevel"
         capability "Refresh"
         capability "Polling"
@@ -31,7 +35,13 @@ def initialize() {
     try { sendEvent(name: "lanIp", value: getDataValue('ip') ?: '') } catch (Throwable ignored) { }
     try { sendEvent(name: "hostFirmware", value: getDataValue('hostFirmware') ?: '') } catch (Throwable ignored) { }
     try { sendEvent(name: "hostFirmwareBuild", value: getDataValue('hostFirmwareBuild') ?: '') } catch (Throwable ignored) { }
+    initialiseGoogleSafeState()
     try { refresh() } catch (Throwable ignored) { }
+}
+
+private void initialiseGoogleSafeState() {
+    try { if (device.currentValue("switch") == null) sendEvent(name: "switch", value: "off", displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("level") == null) sendEvent(name: "level", value: 100, displayed: false) } catch (Throwable ignored) { }
 }
 def poll() { refresh() }
 def refresh() { parent.childRefresh(device) }
