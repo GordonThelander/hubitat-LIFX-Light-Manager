@@ -1,21 +1,23 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** B1.0 beta
+**Version:** B1.2 beta
 
-LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
+LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
 ## What it does
 
 - Uses a LIFX Personal Access Token for discovery and metadata enrichment.
 - Discovers LIFX lights on the local LAN and records their current IP addresses.
-- Maintains a device preparation table showing label, IP address, group, product, capabilities and driver mode.
+- Maintains a device preparation table showing label, local name, IP address, group, product, capabilities, driver mode, cloud connection and status.
+- Supports optional local Hubitat names before child-device creation.
 - Handles Cloud ID to LAN UID mismatches, including the observed `cloud+1` case.
 - Creates Hubitat child devices for mono, tunable white, colour and Plus/IR-capable LIFX lights.
 - Detects changed IP addresses and marks affected devices for update.
 - Updates child device data and visible current-state attributes after IP remediation.
 - Provides a **LIFX Master Switch** aggregate device for whole-fleet control.
 - Supports fast local on/off control for individual children and the Master Switch.
-- Supports Master Switch colour control, applying colour to colour-capable lights and level-only changes to non-colour lights.
+- Supports Master Switch colour and colour-temperature control, applying colour to colour-capable lights and level-only changes to non-colour lights.
+- Supports optional lightweight LAN polling of installed child devices for on/off switch state.
 
 ## Components
 
