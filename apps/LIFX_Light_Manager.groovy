@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: B1.1
+ * Version: B1.2
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -15,6 +15,7 @@
  * - Cloud and LAN discovery run sequentially from one Discovery button
  * - Cloud/LAN diagnostic tables are hidden behind an Advanced button
  * - Child device creation uses saved per-device checkboxes, editable prefix, corrected driver assignment, LAN UID for child DNI, and protocol target UID for control
+ * - Child device creation enables lightweight LAN on/off polling at a 2-minute default interval
  *
  */
 
@@ -38,16 +39,40 @@ preferences {
 // ---------------- Hubitat lifecycle ----------------
 
 def installed() { initialiseState() }
-def updated() { initialiseState() }
+def updated() {
+    initialiseState()
+    handleDiscoveryButtonFallback()
+    configureStatusPolling(false)
+}
 def uninstalled() { unschedule() }
 
 def appButtonHandler(String btn) {
     if (btn == "discoverBtn") startCombinedDiscovery()
     if (btn == "createSelectedChildrenBtn") createOrUpdateSelectedChildDevicesFromCurated()
     if (btn == "createAllChildrenBtn") createOrUpdateAllChildDevicesFromCurated()
+    if (btn == "renameDiscoveredLightsBtn") renameDiscoveredLightsFromSettings()
+    if (btn == "applyStatusPollingBtn") configureStatusPolling()
+    if (btn == "pollStatusNowBtn") pollManagedChildSwitchStatus()
+    if (btn == "renameChildDevicesBtn") renameManagedChildDevicesFromSettings()
     if (btn == "createFastGroupBtn") createOrUpdateFastGroupChildDevice()
     if (btn == "advancedBtn") toggleAdvanced()
     if (btn == "clearAllBtn") clearAllData()
+}
+
+void handleDiscoveryButtonFallback() {
+    // Hubitat can occasionally persist a button click during the preferences update cycle
+    // instead of invoking appButtonHandler() on the first click after a code/UI change.
+    // Treat that persisted button value as a real Discovery click, clear it immediately,
+    // and only start discovery if a discovery run is not already active.
+    Boolean discoveryButtonWasPersisted = false
+    try { discoveryButtonWasPersisted = (settings?.discoverBtn != null) } catch (Throwable ignored) { }
+    if (!discoveryButtonWasPersisted) return
+
+    try { app.removeSetting("discoverBtn") } catch (Throwable ignored) { }
+    if (isDiscoveryRunning()) return
+
+    log.info "Discovery button fallback triggered from updated()"
+    startCombinedDiscovery()
 }
 
 def mainPage(params = null) {
@@ -80,7 +105,7 @@ void renderMainPageContent(Boolean advanced) {
         }
         input "discoverBtn", "button", title: "Discovery", submitOnChange: true
         input "childNamePrefix", "text",
-            title: "Optional child device name prefix",
+            title: "<b>Optional child device name prefix</b>",
             description: "Example: Lounge. Leave blank to use the detected label exactly.",
             required: false,
             submitOnChange: false
@@ -88,17 +113,31 @@ void renderMainPageContent(Boolean advanced) {
         Map childOptions = childCreationOptions()
         if (childOptions) {
             paragraph childCreationActionHtml()
+            paragraph "<b>Select and optionally rename discovered lights</b><br/>Tick the lights to create or update. To rename a light, enter a local Hubitat name directly below that discovered light entry, then click Apply local names before creating/updating child devices. Blank rename fields are ignored. This does not rename the light in LIFX Cloud."
             childOptions.each { uid, title ->
-                Boolean defaultSelected = childSelectDefault(uid.toString())
+                String uidText = uid.toString()
+                Map row = childCreationRowsByUid()[normalisedUid(uidText)] as Map
+                String detected = (row?.label ?: uidText).toString()
+                String currentLocal = (row?.customLabel ?: row?.localLabel ?: "").toString().trim()
+
+                Boolean defaultSelected = childSelectDefault(uidText)
                 if (defaultSelected) {
-                    try { app.updateSetting(childSelectSettingName(uid.toString()), [type: "bool", value: true]) } catch (Throwable ignored) { }
+                    try { app.updateSetting(childSelectSettingName(uidText), [type: "bool", value: true]) } catch (Throwable ignored) { }
                 }
-                input childSelectSettingName(uid.toString()), "bool",
+                input childSelectSettingName(uidText), "bool",
                     title: title.toString(),
                     defaultValue: defaultSelected,
                     required: false,
                     submitOnChange: true
+
+                input discoveredLightRenameSettingName(uidText), "text",
+                    title: "",
+                    description: currentLocal ? "Current override: ${currentLocal}. Leave blank to keep it." : "Leave blank to keep detected name: ${detected}",
+                    defaultValue: "Optional alternative local name",
+                    required: false,
+                    submitOnChange: false
             }
+            input "renameDiscoveredLightsBtn", "button", title: "Apply local names", submitOnChange: true
             input masterSwitchSelectSettingName(), "bool",
                 title: masterSwitchListEntryTitle(),
                 defaultValue: true,
@@ -109,6 +148,22 @@ void renderMainPageContent(Boolean advanced) {
         } else {
             paragraph "No creation-ready devices yet. Run Discovery first."
         }
+
+        paragraph "<b>Optional child status polling</b><br/>Polls installed LIFX child devices over LAN for on/off state only. This is intentionally lightweight and does not run firmware discovery or full device refresh."
+        input "lifxStatusPollingEnabled", "bool",
+            title: "Enable timed on/off status polling",
+            defaultValue: false,
+            required: false,
+            submitOnChange: true
+        input "lifxStatusPollIntervalMinutes", "enum",
+            title: "Status polling interval",
+            options: ["1":"1 minute", "2":"2 minutes", "5":"5 minutes", "10":"10 minutes", "15":"15 minutes", "30":"30 minutes"],
+            defaultValue: "2",
+            required: false,
+            submitOnChange: true
+        input "applyStatusPollingBtn", "button", title: "Apply polling settings", submitOnChange: true
+        input "pollStatusNowBtn", "button", title: "Poll status now", submitOnChange: true
+
         input "clearAllBtn", "button", title: "Clear all Data", submitOnChange: true
         input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced", submitOnChange: true
     }
@@ -126,6 +181,24 @@ void renderMainPageContent(Boolean advanced) {
     if (atomicState.childCreateResult) {
         section("Child device creation") {
             paragraph atomicState.childCreateResult
+        }
+    }
+
+    if (atomicState.discoveredRenameResult) {
+        section("Discovered light rename") {
+            paragraph atomicState.discoveredRenameResult
+        }
+    }
+
+    if (atomicState.childRenameResult) {
+        section("Child device rename") {
+            paragraph atomicState.childRenameResult
+        }
+    }
+
+    if (atomicState.statusPollingResult) {
+        section("Child status polling") {
+            paragraph atomicState.statusPollingResult
         }
     }
 
@@ -161,6 +234,9 @@ void initialiseState() {
     if (atomicState.discoveryMode == null) atomicState.discoveryMode = "cloud-led"
     if (atomicState.showAdvanced == null) atomicState.showAdvanced = false
     if (atomicState.childCreateResult == null) atomicState.childCreateResult = ""
+    if (atomicState.discoveredRenameResult == null) atomicState.discoveredRenameResult = ""
+    if (atomicState.childRenameResult == null) atomicState.childRenameResult = ""
+    if (atomicState.statusPollingResult == null) atomicState.statusPollingResult = ""
     if (lifxCloudToken == null) app.updateSetting("lifxCloudToken", [type: "string", value: ""])
     if (fastGroupName == null) app.updateSetting("fastGroupName", [type: "text", value: "LIFX MASTER SWITCH"])
     try { app.updateSetting(masterSwitchSelectSettingName(), [type: "bool", value: true]) } catch (Throwable ignored) { }
@@ -283,6 +359,7 @@ void startLanDiscovery() {
     if (allExpectedFound() && atomicState.forceFullLanDiscovery != true) {
         atomicState.status = "complete"
         atomicState.phase = "Saved device table already has IP addresses for all rows"
+        configureStatusPolling(false)
         return
     }
 
@@ -588,6 +665,7 @@ void finishLocator(String reason) {
     atomicState.phase = "Discovery completed"
     atomicState.curatedReady = true
     refreshMasterSwitchMembership()
+    configureStatusPolling(false)
 }
 
 void stopLocator() {
@@ -1019,7 +1097,7 @@ Map childCreationOptions() {
         String currentDriverDisplay = driverDisplayName(currentDriver)
         Boolean ipChanged = rowHasInstalledIpChange(row)
         String installed = child ? (currentDriver && !driverNamesEquivalent(currentDriver, driver) ? "installed as ${currentDriverDisplay}; expected ${driverDisplay}" : "installed") : "not installed"
-        String label = (row.label ?: uid).toString()
+        String label = childLabelForRow(row)
         String ip = (row.ip ?: "no IP").toString()
         String note = ipChanged ? " - Update required due to IP address change" : ""
         options[uid] = "${label} - ${ip} - ${driverDisplay} - ${installed}${note}".toString()
@@ -1063,7 +1141,8 @@ String masterSwitchSelectSettingName() {
 
 String masterSwitchListEntryTitle() {
     String status = getChildDevice(fastGroupDni()) ? "installed" : "not installed"
-    return "LIFX MASTER SWITCH - provides overall control of all the above LIFX lights - ${status}".toString()
+    String displayName = fastGroupLabel()
+    return "${displayName} - provides overall control of all the above LIFX lights - ${status}".toString()
 }
 
 Boolean isMasterSwitchSelected() {
@@ -1110,7 +1189,215 @@ void clearChildSelectionSettings() {
     } catch (Throwable ignored) { }
 }
 
+
+String discoveredLightRenameActionHtml() {
+    List rows = childCreationRows()
+    if (!rows) return "No discovered lights are ready to rename yet. Run Discovery first."
+    return "Enter a local Hubitat name beside any discovered light you want renamed before child-device creation, then click Apply discovered light names. Blank fields are ignored. This does not rename the light in LIFX Cloud."
+}
+
+String discoveredLightRenameSettingName(String uidValue) {
+    String uid = normalisedUid(uidValue)
+    String safe = (uid ?: "").replaceAll("[^A-Za-z0-9_]", "_")
+    return safe ? "renameDiscovered_${safe}".toString() : "renameDiscovered_invalid"
+}
+
+void renderDiscoveredLightRenameInputs() {
+    List rows = childCreationRows()
+    if (!rows) return
+
+    rows.each { item ->
+        Map row = item as Map
+        String uid = normalisedUid(row.id ?: row.uid ?: row.lanUid)
+        if (!uid) return
+        String cloudName = (row.label ?: uid).toString()
+        String localName = (row.customLabel ?: row.localLabel ?: "").toString().trim()
+        String current = localName ?: cloudName
+        String ip = (row.ip ?: "no IP").toString()
+        input discoveredLightRenameSettingName(uid), "text",
+            title: "${current} - ${ip}",
+            description: localName ? "Current local name override. Leave blank to keep it." : "Detected name: ${cloudName}. Leave blank to keep it.",
+            required: false,
+            submitOnChange: false
+    }
+    input "renameDiscoveredLightsBtn", "button", title: "Apply discovered light names", submitOnChange: true
+}
+
+String discoveredLightRenameSettingValue(String uidValue) {
+    String settingName = discoveredLightRenameSettingName(uidValue)
+    String value = ""
+    try { value = (settings[settingName] ?: "").toString().trim() } catch (Throwable ignored) { }
+    if (!value) {
+        try { value = (this."${settingName}" ?: "").toString().trim() } catch (Throwable ignored) { }
+    }
+    if (value.equalsIgnoreCase("Optional alternative local name")) return ""
+    return value
+}
+
+void renameDiscoveredLightsFromSettings() {
+    Map curated = atomicState.curatedRows ?: [:]
+    if (!curated) {
+        atomicState.discoveredRenameResult = "No discovered lights found to rename. Run Discovery first."
+        return
+    }
+
+    List renamed = []
+    List skipped = []
+    List failed = []
+
+    childCreationRows().each { item ->
+        Map row = item as Map
+        String uid = normalisedUid(row.id ?: row.uid ?: row.lanUid)
+        if (!uid) return
+
+        String newName = discoveredLightRenameSettingValue(uid)
+        if (!newName) return
+
+        if (newName.size() > 80) {
+            skipped << "${html(row.label ?: uid)}: name is too long; keep it under 80 characters."
+            return
+        }
+
+        try {
+            String oldDisplay = childLabelForRow(row)
+            row.customLabel = newName
+            row.localLabel = newName
+            row.childStatus = row.childDni ? "Local name updated" : "Local name set"
+            curated[row.id ?: row.uid ?: uid] = row
+
+            def existing = getChildDevice(childDniForRow(row))
+            if (existing) {
+                try { existing.setLabel(childLabelForRow(row)) } catch (Throwable ignored) { }
+                try { existing.updateDataValue("displayLabel", childLabelForRow(row)) } catch (Throwable ignored) { }
+                try { existing.updateDataValue("localLabel", newName) } catch (Throwable ignored) { }
+                try { existing.sendEvent(name: "label", value: childLabelForRow(row), displayed: false) } catch (Throwable ignored) { }
+            }
+
+            renamed << "${html(oldDisplay)} &rarr; ${html(childLabelForRow(row))}"
+            try { app.updateSetting(discoveredLightRenameSettingName(uid), [type: "text", value: ""]) } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            failed << "${html(row.label ?: uid)}: ${html(safeMessage(t.message))}"
+        }
+    }
+
+    atomicState.curatedRows = curated
+    refreshMasterSwitchMembership()
+
+    String result = "<b>Discovered-light rename action</b><br/>"
+    if (renamed) result += "<br/><b>Renamed</b><br/>${renamed.join('<br/>')}<br/>"
+    if (skipped) result += "<br/><b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
+    if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
+    atomicState.discoveredRenameResult = (renamed || skipped || failed) ? result : "No discovered-light rename fields were completed."
+}
+
+String childRenameActionHtml() {
+    List children = managedLifxLightChildren()
+    if (!children) return "No installed LIFX child devices found yet. Create child devices first, then return here to rename them."
+    return "Enter a new Hubitat child-device name beside any device you want renamed, then click Apply child device renames. Blank fields are ignored. These are local Hubitat names only; they do not rename the light in the LIFX cloud or LIFX mobile app."
+}
+
+String childRenameSettingNameForDni(String dniValue) {
+    String safe = (dniValue ?: "").toString().replaceAll("[^A-Za-z0-9_]", "_")
+    return safe ? "renameChild_${safe}".toString() : "renameChild_invalid"
+}
+
+void renderChildRenameInputs() {
+    List children = managedLifxLightChildren()
+    if (!children) return
+
+    children.each { child ->
+        String dni = ""
+        String currentName = ""
+        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
+        try { currentName = child.displayName?.toString() ?: child.name?.toString() ?: dni } catch (Throwable ignored) { currentName = dni }
+        input childRenameSettingNameForDni(dni), "text",
+            title: "Rename ${currentName}",
+            description: "Leave blank to keep current name.",
+            required: false,
+            submitOnChange: false
+    }
+    input "renameChildDevicesBtn", "button", title: "Apply child device renames", submitOnChange: true
+}
+
+String childRenameSettingValue(String dniValue) {
+    String settingName = childRenameSettingNameForDni(dniValue)
+    try { return (settings[settingName] ?: "").toString().trim() } catch (Throwable ignored) { }
+    try { return (this."${settingName}" ?: "").toString().trim() } catch (Throwable ignored) { }
+    return ""
+}
+
+Map curatedRowsByChildDni() {
+    Map out = [:]
+    Map curated = atomicState.curatedRows ?: [:]
+    curated.each { k, v ->
+        Map row = (v ?: [:]) as Map
+        String dni = row.childDni?.toString() ?: childDniForRow(row)
+        if (dni) out[dni] = [key: k, row: row]
+    }
+    return out
+}
+
+void renameManagedChildDevicesFromSettings() {
+    List children = managedLifxLightChildren()
+    if (!children) {
+        atomicState.childRenameResult = "No installed LIFX child devices found to rename."
+        return
+    }
+
+    Map curated = atomicState.curatedRows ?: [:]
+    Map byDni = curatedRowsByChildDni()
+    List renamed = []
+    List skipped = []
+    List failed = []
+
+    children.each { child ->
+        String dni = ""
+        String oldName = ""
+        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
+        try { oldName = child.displayName?.toString() ?: child.name?.toString() ?: dni } catch (Throwable ignored) { oldName = dni }
+
+        String newName = childRenameSettingValue(dni)
+        if (!newName) return
+
+        if (newName.size() > 80) {
+            skipped << "${html(oldName)}: name is too long; keep it under 80 characters."
+            return
+        }
+
+        try {
+            child.setLabel(newName)
+            Map match = byDni[dni] as Map
+            if (match?.row) {
+                Map row = match.row as Map
+                row.customLabel = newName
+                row.localLabel = newName
+                row.childStatus = "Renamed"
+                String key = (match.key ?: row.id ?: row.uid ?: row.lanUid)?.toString()
+                if (key) curated[key] = row
+                try { child.updateDataValue("displayLabel", newName) } catch (Throwable ignored) { }
+                try { child.updateDataValue("localLabel", newName) } catch (Throwable ignored) { }
+                try { child.sendEvent(name: "label", value: newName, displayed: false) } catch (Throwable ignored) { }
+            }
+            renamed << "${html(oldName)} &rarr; ${html(newName)}"
+            try { app.updateSetting(childRenameSettingNameForDni(dni), [type: "text", value: ""]) } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            failed << "${html(oldName)}: ${html(safeMessage(t.message))}"
+        }
+    }
+
+    atomicState.curatedRows = curated
+    refreshMasterSwitchMembership()
+
+    String result = "<b>Child-device rename action</b><br/>"
+    if (renamed) result += "<br/><b>Renamed</b><br/>${renamed.join('<br/>')}<br/>"
+    if (skipped) result += "<br/><b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
+    if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
+    atomicState.childRenameResult = (renamed || skipped || failed) ? result : "No rename fields were completed."
+}
+
 String childLabelForRow(Map row) {
+    String custom = (row?.customLabel ?: row?.localLabel ?: "").toString().trim()
+    if (custom) return custom
     String base = (row?.label ?: row?.id ?: row?.uid ?: "LIFX Device").toString().trim()
     String prefix = (childNamePrefix ?: "").toString().trim()
     return prefix ? "${prefix} ${base}".toString() : base
@@ -1310,6 +1597,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
                 updateChildDataValues(existing, row, driverType)
                 row.childDni = dni
                 row.childDriver = driverType
+                row.childLabel = label
                 row.childStatus = "Updated"
                 updated << "${html(label)} (${html(driverType)})"
             } else {
@@ -1326,6 +1614,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
                 )
                 row.childDni = dni
                 row.childDriver = driverType
+                row.childLabel = label
                 row.childStatus = "Created"
                 created << "${html(label)} (${html(driverType)})"
                 syncChildRuntimeAttributes(child, row, driverType)
@@ -1344,22 +1633,41 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
 
     atomicState.curatedRows = curated
 
-    String result = "<b>Child-device action:</b> ${html(actionLabel ?: '')}<br/>"
-    if (created) result += "<br/><b>Created</b><br/>${created.join('<br/>')}<br/>"
-    if (updated) result += "<br/><b>Updated</b><br/>${updated.join('<br/>')}<br/>"
-    if (skipped) result += "<br/><b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
+    String result = ""
+    if (skipped) result += "<b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
     if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
 
-    String childResult = (created || updated || skipped || failed) ? result : "No child-device changes made."
+    String childResult = (skipped || failed) ? result : ""
     if (ensureMasterSwitch) {
-        String before = childResult
         createOrUpdateFastGroupChildDevice()
+        String masterResult = (atomicState.childCreateResult ?: "").toString()
         refreshMasterSwitchMembership()
-        childResult = before + "<br/><br/><b>LIFX MASTER SWITCH</b><br/>" + (atomicState.childCreateResult ?: "Created/updated LIFX MASTER SWITCH")
+        if (masterResult?.toLowerCase()?.contains("failed") || masterResult?.toLowerCase()?.contains("not installed")) {
+            childResult = (childResult ? childResult + "<br/><br/>" : "") + "<b>LIFX MASTER SWITCH</b><br/>" + masterResult
+        }
     } else {
         refreshMasterSwitchMembership()
     }
+    if (created || updated) {
+        enableDefaultStatusPollingAfterChildCreation()
+    }
+
     atomicState.childCreateResult = childResult
+}
+
+void enableDefaultStatusPollingAfterChildCreation() {
+    // Safe default after child creation: LAN-only LIGHT.GET_POWER polling every 2 minutes.
+    // This does not call the LIFX Cloud API, firmware discovery, product/version lookup,
+    // brightness polling, colour polling or full child refresh.
+    try { app.updateSetting("lifxStatusPollingEnabled", [type: "bool", value: true]) } catch (Throwable ignored) { }
+    try { app.updateSetting("lifxStatusPollIntervalMinutes", [type: "enum", value: "2"]) } catch (Throwable ignored) { }
+    try {
+        configureStatusPolling(false)
+        atomicState.statusPollingResult = "Timed child status polling enabled by child-device creation: on/off status only, every 2 minutes."
+    } catch (Throwable t) {
+        atomicState.statusPollingResult = "Timed child status polling could not be enabled after child-device creation: ${html(safeMessage(t.message))}"
+        log.warn atomicState.statusPollingResult
+    }
 }
 
 Map childDataMap(Map row, String driverType) {
@@ -1378,6 +1686,8 @@ Map childDataMap(Map row, String driverType) {
         ip: "${row.ip ?: ''}",
         port: "${row.port ?: 56700}",
         label: "${row.label ?: ''}",
+        displayLabel: "${childLabelForRow(row)}",
+        localLabel: "${row.customLabel ?: row.localLabel ?: ''}",
         group: "${row.groupName ?: ''}",
         productName: "${row.productName ?: ''}",
         productIdentifier: "${row.productIdentifier ?: ''}",
@@ -1407,7 +1717,7 @@ void syncChildRuntimeAttributes(child, Map row, String driverType = "") {
     // need to manually Initialize the child device to clear the old Lan Ip display.
     try { child.sendEvent(name: "uid", value: "${lanUidForRow(row) ?: cloudUidForRow(row) ?: ''}", displayed: false) } catch (Throwable ignored) { }
     try { child.sendEvent(name: "lanIp", value: "${row.ip ?: ''}", displayed: false) } catch (Throwable ignored) { }
-    try { child.sendEvent(name: "label", value: "${row.label ?: ''}", displayed: false) } catch (Throwable ignored) { }
+    try { child.sendEvent(name: "label", value: "${childLabelForRow(row)}", displayed: false) } catch (Throwable ignored) { }
 
     if (truthy(row.hasVariableColorTemp)) {
         Integer kelvin = safeInt(row.kelvin) ?: safeInt(row.colorTemperature) ?: null
@@ -1563,6 +1873,66 @@ List<Map> bulkControlRows() {
         .sort { a, b -> compareUid(lanUidForRow(a as Map), lanUidForRow(b as Map)) }
 }
 
+
+Integer statusPollIntervalMinutes() {
+    Integer minutes = safeInt(lifxStatusPollIntervalMinutes) ?: 2
+    return clampInt(minutes, 1, 30)
+}
+
+Boolean statusPollingEnabled() {
+    try { return lifxStatusPollingEnabled == true || lifxStatusPollingEnabled?.toString() == "true" } catch (Throwable ignored) { }
+    return false
+}
+
+void configureStatusPolling(Boolean showResult = true) {
+    try { unschedule("pollManagedChildSwitchStatus") } catch (Throwable ignored) { }
+
+    if (!statusPollingEnabled()) {
+        if (showResult) atomicState.statusPollingResult = "Timed child status polling is disabled."
+        return
+    }
+
+    Integer minutes = statusPollIntervalMinutes()
+    try {
+        schedule("0 0/${minutes} * * * ?", "pollManagedChildSwitchStatus")
+        atomicState.statusPollingResult = "Timed child status polling enabled: on/off status only, every ${minutes} minute${minutes == 1 ? '' : 's'}."
+    } catch (Throwable t) {
+        atomicState.statusPollingResult = "Timed child status polling could not be scheduled: ${html(safeMessage(t.message))}"
+        log.warn atomicState.statusPollingResult
+    }
+}
+
+@SuppressWarnings("unused")
+def pollManagedChildSwitchStatus() {
+    if (!statusPollingEnabled()) {
+        try { unschedule("pollManagedChildSwitchStatus") } catch (Throwable ignored) { }
+        return
+    }
+
+    List<Map> rows = bulkControlRows()
+    if (!rows) {
+        atomicState.statusPollingResult = "No installed LIFX child devices available to poll."
+        return
+    }
+
+    Integer sent = 0
+    Integer skipped = 0
+    Long started = now()
+    rows.each { item ->
+        Map row = item as Map
+        if ((row.ip ?: '').toString().trim()) {
+            sendLifxToRow(row, 116, [], false, true, "parseChildLifx", 1, 0) // LIGHT.GET_POWER only
+            sent++
+            pauseExecution(60)
+        } else {
+            skipped++
+        }
+    }
+
+    atomicState.statusPollingResult = "Last on/off status poll sent to ${sent} child device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update child switch state as they arrive."
+    refreshMasterSwitchMembership()
+}
+
 void refreshMasterSwitchMembership(masterDevice = null) {
     def dev = masterDevice ?: getChildDevice(fastGroupDni())
     if (!dev) return
@@ -1676,10 +2046,22 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
     Integer brightness = scalePercentToLifx(level)
+
+    // Important for Google Home: a Master dimmer action must be brightness-only.
+    // LIFX has no separate "set brightness only" packet, so SET_COLOR must be sent
+    // with each bulb's existing H/S/K values preserved. Sending hue=0/sat=0 here
+    // makes Google dimming look like a colour/hue change.
     rows.each { item ->
         Map row = item as Map
-        Integer kelvin = clampKelvin(row, safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
-        List<Integer> payload = [0] + u16le(0) + u16le(0) + u16le(brightness) + u16le(kelvin) + u32le(durationMs ?: 0)
+        def child = getChildDevice(childDniForBulkRow(row))
+        Integer kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
+        Integer hue = 0
+        Integer sat = 0
+        if (rowIsColourCapable(row)) {
+            hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
+            sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
+        }
+        List<Integer> payload = [0] + u16le(hue) + u16le(sat) + u16le(brightness) + u16le(kelvin) + u32le(durationMs ?: 0)
         sendFastSetToRow(row, 102, payload)
     }
     rows.each { row ->
@@ -2050,13 +2432,16 @@ Integer clampKelvin(Map row, value) {
 String statusHtml() {
     updateMatchStats()
     Map stats = atomicState.stats ?: emptyStats()
+    Integer savedRows = curatedRowCount()
+    Integer rowsWithIp = curatedWithIpCount()
+    Integer rowsMissingIp = Math.max(0, savedRows - rowsWithIp)
     String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
     return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>" +
         "<b>Status:</b> ${html(atomicState.status ?: 'idle')}<br/>" +
         "<b>Cloud status:</b> ${html(atomicState.cloudStatus ?: 'not tested')}<br/>" +
-        "<b>Saved curated rows:</b> ${stats.expected ?: 0}<br/>" +
-        "<b>Device rows with IP:</b> ${stats.matched ?: 0} / ${stats.expected ?: 0}<br/>" +
-        "<b>Device rows missing IP:</b> ${stats.missing ?: 0}<br/>" +
+        "<b>Saved curated rows:</b> ${savedRows}<br/>" +
+        "<b>Device rows with IP:</b> ${rowsWithIp} / ${savedRows}<br/>" +
+        "<b>Device rows missing IP:</b> ${rowsMissingIp}<br/>" +
         "<b>LAN-only devices:</b> ${stats.lanOnly ?: 0}<br/>" +
         "<b>First broadcast pulses:</b> ${stats.broadcastPulses ?: 0}<br/>" +
         "<b>Second broadcast pulses:</b> ${stats.secondBroadcastPulses ?: 0}<br/>" +
@@ -2075,7 +2460,7 @@ String curatedTableHtml() {
     StringBuilder b = new StringBuilder()
     b << tableOpenHtml()
     b << "<tr>"
-    ["UID", "Label", "IP address", "Last seen", "Group", "Product", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
+    ["UID", "Label", "Local name", "IP address", "Last seen", "Group", "Product", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
         b << headerCell(h, idx, h == "Cloud connected" ? "connected" : null)
     }
     b << "</tr>"
@@ -2083,6 +2468,7 @@ String curatedTableHtml() {
         b << "<tr>"
         b << cell(r.id ?: r.uid, 0)
         b << cell(r.label, 1)
+        b << cell((r.childLabel ?: r.customLabel ?: r.localLabel ?: ""), 1)
         b << cell(r.ip, 2)
         b << cell(curatedLastSeen(r), 3)
         b << cell(r.groupName, 4)
