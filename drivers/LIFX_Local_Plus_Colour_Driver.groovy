@@ -1,7 +1,7 @@
 /*
  * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: B1.0
+ * Version: B1.1
  * Parent app: LIFX Light Manager v4.7.6+
  */
 metadata {
@@ -18,6 +18,8 @@ metadata {
         attribute "label", "string"
         attribute "uid", "string"
         attribute "lanIp", "string"
+        attribute "hostFirmware", "string"
+        attribute "hostFirmwareBuild", "string"
         attribute "IRLevel", "number"
         attribute "infraredLevel", "number"
         command "setInfraredLevel", [[name: "Level", type: "NUMBER"]]
@@ -33,6 +35,8 @@ def updated() { initialize() }
 def initialize() {
     try { sendEvent(name: "uid", value: getDataValue('uid') ?: deviceNetworkId) } catch (Throwable ignored) { }
     try { sendEvent(name: "lanIp", value: getDataValue('ip') ?: '') } catch (Throwable ignored) { }
+    try { sendEvent(name: "hostFirmware", value: getDataValue('hostFirmware') ?: '') } catch (Throwable ignored) { }
+    try { sendEvent(name: "hostFirmwareBuild", value: getDataValue('hostFirmwareBuild') ?: '') } catch (Throwable ignored) { }
     try { refresh() } catch (Throwable ignored) { }
 }
 def poll() { refresh() }

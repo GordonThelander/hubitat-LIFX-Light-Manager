@@ -1,7 +1,7 @@
 /*
  * LIFX Master Switch
  * Namespace: Hubitat Integrations
- * Version: B1.0
+ * Version: B1.1
  * Parent app: LIFX Light Manager B1.0+
  *
  * Purpose:
