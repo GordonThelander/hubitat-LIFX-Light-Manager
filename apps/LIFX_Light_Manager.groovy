@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: B1.0
+ * Version: B1.1
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -25,8 +25,8 @@ definition(
     description: "Maintains a saved LIFX device table from Cloud data and updates LAN IPs separately by UID matching.",
     category: "Convenience",
     menu: "Integrations",
-    iconUrl: "",
-    iconX2Url: "",
+    iconUrl: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/resources/icons/blank.png",
+    iconX2Url: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/resources/icons/blank.png",
     singleInstance: true,
     installOnOpen: true
 )
@@ -78,7 +78,7 @@ void renderMainPageContent(Boolean advanced) {
         if (atomicState.tokenError) {
             paragraph "<div style='font-weight:bold;color:#cc0000'>${atomicState.tokenError}</div>"
         }
-        input "discoverBtn", "button", title: "Discovery"
+        input "discoverBtn", "button", title: "Discovery", submitOnChange: true
         input "childNamePrefix", "text",
             title: "Optional child device name prefix",
             description: "Example: Lounge. Leave blank to use the detected label exactly.",
@@ -104,13 +104,13 @@ void renderMainPageContent(Boolean advanced) {
                 defaultValue: true,
                 required: false,
                 submitOnChange: true
-            input "createSelectedChildrenBtn", "button", title: "Create / update selected child devices"
-            input "createAllChildrenBtn", "button", title: "Create / update all listed child devices"
+            input "createSelectedChildrenBtn", "button", title: "Create / update selected child devices", submitOnChange: true
+            input "createAllChildrenBtn", "button", title: "Create / update all listed child devices", submitOnChange: true
         } else {
             paragraph "No creation-ready devices yet. Run Discovery first."
         }
-        input "clearAllBtn", "button", title: "Clear all Data"
-        input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced"
+        input "clearAllBtn", "button", title: "Clear all Data", submitOnChange: true
+        input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced", submitOnChange: true
     }
 
     if (isDiscoveryRunning()) {
@@ -119,7 +119,7 @@ void renderMainPageContent(Boolean advanced) {
         }
     } else if ((atomicState.status ?: "idle") == "complete") {
         section("Status") {
-            paragraph "<div style='font-weight:bold;color:#777777'>Discovery completed</div>"
+            paragraph "<div style='font-weight:bold;color:#008000'>Discovery completed</div>"
         }
     }
 
@@ -843,7 +843,6 @@ def parseLifx(response) {
             if (!dev.baseCapability) dev.baseCapability = capabilityForProduct(dev.product)
             if (!dev.driverMode) dev.driverMode = driverModeForProduct(dev.product)
             if (c) {
-                c.firmware = dev.version ?: c.firmware
                 c.lanProduct = dev.product ?: c.lanProduct
                 c.status = c.status ?: "LAN found - ${cloudMatch?.matchType ?: ''}"
             }
@@ -883,7 +882,6 @@ def parseLifx(response) {
             c.cloudMatchType = cloudMatch.matchType ?: ""
             c.lanLastSeen = now()
             c.status = "LAN found - ${c.cloudMatchType}${mac && mac != cloudId ? ' - LAN UID ' + mac : ''}${protocolTargetUid && protocolTargetUid != mac ? ' - target ' + protocolTargetUid : ''}"
-            if (dev.version) c.firmware = dev.version
             if (dev.product) c.lanProduct = dev.product
             curated[cloudId] = c
             atomicState.curatedRows = curated
@@ -938,6 +936,7 @@ Map parseStateVersion(String payloadHex) {
     [vendor: leU32(payloadHex, 0), product: leU32(payloadHex, 8), version: leU32(payloadHex, 16)]
 }
 
+
 Map parseLabelPayload(String payloadHex) {
     if (!payloadHex || payloadHex.size() < 96) return [:]
     return [label: officialDeviceName(decodeLabel(payloadHex.substring(32)))]
@@ -975,7 +974,6 @@ void mergeLanOnlyIntoCurated(Map dev) {
     row.groupName = dev.group ?: row.groupName ?: ""
     row.locationName = dev.location ?: row.locationName ?: ""
     row.lanProduct = dev.product ?: row.lanProduct
-    row.firmware = dev.version ?: row.firmware
     row.productName = row.productName ?: (dev.product ? "LAN product ${dev.product}" : "")
     row.capability = dev.baseCapability ?: capabilityForProduct(dev.product)
     row.driverMode = dev.driverMode ?: driverModeForProduct(dev.product)
@@ -2052,7 +2050,7 @@ Integer clampKelvin(Map row, value) {
 String statusHtml() {
     updateMatchStats()
     Map stats = atomicState.stats ?: emptyStats()
-    String colour = ((atomicState.status ?: "idle") in ["cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777"
+    String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
     return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>" +
         "<b>Status:</b> ${html(atomicState.status ?: 'idle')}<br/>" +
         "<b>Cloud status:</b> ${html(atomicState.cloudStatus ?: 'not tested')}<br/>" +
@@ -2088,7 +2086,8 @@ String curatedTableHtml() {
         b << cell(r.ip, 2)
         b << cell(curatedLastSeen(r), 3)
         b << cell(r.groupName, 4)
-        b << cell(r.productName ?: r.productIdentifier ?: (r.lanProduct ? "LAN product ${r.lanProduct}" : ""), 5)
+        String productDisplay = r.productName ?: r.productIdentifier ?: (r.lanProduct ? "LAN product ${r.lanProduct}" : "")
+        b << cell(productDisplay, 5)
         b << cell(r.capability ?: cloudCapability(r), 6)
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
         b << cell(r.connected == null ? "" : r.connected, null, "connected")
@@ -2284,21 +2283,23 @@ String tableOpenHtml() {
 }
 
 String fixedColumnStyle(Integer index) {
-    if (index == 0) return "width:120px;min-width:120px;max-width:120px;"      // UID
-    if (index == 1) return "width:230px;min-width:230px;max-width:230px;"      // Label
-    if (index == 2) return "width:105px;min-width:105px;max-width:105px;"      // IP address
-    if (index == 3) return "width:105px;min-width:105px;max-width:105px;"      // Last seen
-    if (index == 4) return "width:190px;min-width:190px;max-width:190px;"      // Group
-    if (index == 5) return "width:240px;min-width:240px;max-width:240px;"      // Product
-    if (index == 6) return "width:190px;min-width:190px;max-width:190px;"      // Capabilities
-    if (index == 7) return "width:240px;min-width:240px;max-width:240px;"      // Driver mode
-    if (index == 9) return "width:330px;min-width:330px;max-width:330px;"      // Status
+    // Right-sized to the actual LIFX curated data: short UIDs/IPs, moderate labels/groups,
+    // product names, longer driver/status text.
+    if (index == 0) return "width:105px;min-width:105px;max-width:105px;"      // UID
+    if (index == 1) return "width:165px;min-width:165px;max-width:165px;"      // Label
+    if (index == 2) return "width:90px;min-width:90px;max-width:90px;"         // IP address
+    if (index == 3) return "width:90px;min-width:90px;max-width:90px;"         // Last seen
+    if (index == 4) return "width:135px;min-width:135px;max-width:135px;"      // Group
+    if (index == 5) return "width:210px;min-width:210px;max-width:210px;"      // Product
+    if (index == 6) return "width:175px;min-width:175px;max-width:175px;"      // Capabilities
+    if (index == 7) return "width:215px;min-width:215px;max-width:215px;"      // Driver mode
+    if (index == 9) return "width:360px;min-width:360px;max-width:360px;"      // Status
     return ""
 }
 
 String fixedColumnStyleByKey(String key) {
-    if (key == "connected") return "width:95px;min-width:95px;max-width:95px;"
-    if (key == "status") return "width:330px;min-width:330px;max-width:330px;"
+    if (key == "connected") return "width:75px;min-width:75px;max-width:75px;"
+    if (key == "status") return "width:360px;min-width:360px;max-width:360px;"
     return ""
 }
 
@@ -2505,6 +2506,16 @@ Long leU32(String hex, Integer offset) {
     Long b2 = Long.parseLong(hex.substring(offset + 4, offset + 6), 16)
     Long b3 = Long.parseLong(hex.substring(offset + 6, offset + 8), 16)
     return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+}
+
+Long leU64(String hex, Integer offset) {
+    if (!hex || hex.size() < offset + 16) return 0L
+    BigInteger value = BigInteger.ZERO
+    for (int i = 7; i >= 0; i--) {
+        Integer pos = offset + (i * 2)
+        value = value.shiftLeft(8).add(new BigInteger(hex.substring(pos, pos + 2), 16))
+    }
+    return value.longValue()
 }
 
 String bytesToHex(List<Integer> bytes) {
