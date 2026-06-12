@@ -1,8 +1,8 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "1.2.1",
-  "minimumHEVersion": "2.3.0",
+  "version": "B1.2",
+  "minimumHEVersion": "B1.0",
   "dateReleased": "2026-06-10",
   "releaseNotes": "B1.0 to B1.2 Beta update: refines LIFX Light Manager from the initial beta into a cleaner local-LAN management build. Adds first-click Discovery reliability, corrected discovery/device-count reporting, improved device preparation table layout, inline discovered-light local naming, optional child-device name prefixing, and clearer child creation/update behaviour. Adds optional lightweight LAN-only switch-state polling using LIGHT.GET_POWER, now enabled after child-device creation at a safe 2-minute default interval. Retains the Master Switch aggregate device and the local child drivers for Mono, Tunable White, Colour and Colour+IR capable lights. Firmware discovery remains excluded from the normal discovery path to keep scans fast and reduce unnecessary LAN chatter. No LIFX Cloud polling is used for runtime status updates.",
   "apps": [
