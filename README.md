@@ -17,8 +17,8 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Provides a **LIFX Master Switch** aggregate device for whole-fleet control.
 - Supports fast local on/off control for individual children and the Master Switch.
 - Supports Master Switch colour and colour-temperature control, applying colour to colour-capable lights and level-only changes to non-colour lights.
-- Supports optional lightweight LAN polling of installed child devices for on/off switch state.
-- Base driver compatibility for intgeration via Hubitat's Google Home App 
+- Supports optional lightweight LAN polling of installed child devices.
+- Driver format compatibility with Google Home
 
 ## Components
 
