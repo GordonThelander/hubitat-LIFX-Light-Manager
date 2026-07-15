@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** B1.2 beta
+**Version:** 1.2 beta
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
