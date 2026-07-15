@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.2 beta
+**Version:** 1.2 Beta
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -10,7 +10,7 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Discovers LIFX lights on the local LAN and records their current IP addresses.
 - Maintains a device preparation table showing label, local name, IP address, group, product, capabilities, driver mode, cloud connection and status.
 - Supports optional local Hubitat names before child-device creation.
-- Handles Cloud ID to LAN UID mismatches, including the observed `cloud+1` case.
+- Handles Cloud ID to LAN UID mismatches, including the observed `cloud+1` MAC address anomaly edge case.
 - Creates Hubitat child devices for mono, tunable white, colour and Plus/IR-capable LIFX lights.
 - Detects changed IP addresses and marks affected devices for update.
 - Updates child device data and visible current-state attributes after IP remediation.
@@ -18,7 +18,7 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports fast local on/off control for individual children and the Master Switch.
 - Supports Master Switch colour and colour-temperature control, applying colour to colour-capable lights and level-only changes to non-colour lights.
 - Supports optional lightweight LAN polling of installed child devices.
-- Driver format compatibility with Google Home
+- Driver format compatibility with Google Home that exposes device capabilities (known issue that colour has to be set once outside of Goole Home and then to use Google to change the colour manually to lock in the RGB capability)  
 
 ## Components
 
@@ -126,4 +126,4 @@ This project was developed after reviewing the original **LIFX Master** Hubitat 
 
 ## Status
 
-B1.0 is intended as a beta release for testing through Hubitat Package Manager.
+1.2 is intended as a beta release for testing through Hubitat Package Manager.
