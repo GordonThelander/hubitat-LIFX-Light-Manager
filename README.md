@@ -126,4 +126,4 @@ This project was developed after reviewing the original **LIFX Master** Hubitat 
 
 ## Status
 
-1.2 is intended as a beta release for testing through Hubitat Package Manager.
+1.3 is intended as a beta release for testing through Hubitat Package Manager.
