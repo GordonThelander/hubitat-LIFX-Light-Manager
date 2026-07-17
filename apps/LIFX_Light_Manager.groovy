@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.3
+ * Version: 1.4
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -67,7 +67,7 @@ void handleDiscoveryButtonFallback() {
     // discovery from here proved unreliable in practice - it could re-trigger mid-flight and
     // reset a run that was already progressing normally. Just clear the stray value; if a click
     // is ever genuinely missed, the user can press Discovery again.
-    try { app.removeSetting("discoverBtn") } catch (Throwable ignored) { }
+    try { app.removeSetting("discoverBtn") } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
 }
 
 def mainPage(params = null) {
@@ -124,7 +124,7 @@ void renderMainPageContent(Boolean advanced) {
 
                 Boolean defaultSelected = childSelectDefault(uidText)
                 if (defaultSelected) {
-                    try { app.updateSetting(childSelectSettingName(uidText), [type: "bool", value: true]) } catch (Throwable ignored) { }
+                    try { app.updateSetting(childSelectSettingName(uidText), [type: "bool", value: true]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
                 }
                 input childSelectSettingName(uidText), "bool",
                     title: title.toString(),
@@ -248,7 +248,7 @@ void initialiseState() {
     if (atomicState.rowRemovalResult == null) atomicState.rowRemovalResult = ""
     if (lifxCloudToken == null) app.updateSetting("lifxCloudToken", [type: "password", value: ""])
     if (fastGroupName == null) app.updateSetting("fastGroupName", [type: "text", value: "LIFX MASTER SWITCH"])
-    try { app.updateSetting(masterSwitchSelectSettingName(), [type: "bool", value: true]) } catch (Throwable ignored) { }
+    try { app.updateSetting(masterSwitchSelectSettingName(), [type: "bool", value: true]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
 }
 
 Map emptyStats() {
@@ -824,7 +824,7 @@ void clearAllData() {
     atomicState.curatedReady = true
     atomicState.runLanAfterCloud = false
     atomicState.childCreateResult = ""
-    try { app.removeSetting("selectedChildUids") } catch (Throwable ignored) { }
+    try { app.removeSetting("selectedChildUids") } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
     state.sweepQueue = []
 }
 
@@ -1138,7 +1138,8 @@ String decodeLabel(String payloadHex) {
         String labelHex = (payloadHex ?: "").take(64)
         byte[] bytes = hexToBytes(labelHex) as byte[]
         return new String(bytes, "UTF-8").replaceAll("\u0000", "").trim()
-    } catch (Throwable ignored) {
+    } catch (Throwable t) {
+        log.debug "decodeLabel() failed: ${t.message}"
         return ""
     }
 }
@@ -1234,7 +1235,7 @@ Boolean rowHasInstalledIpChange(Map row) {
     if (!child) return false
     String newIp = (row.ip ?: "").toString().trim()
     String oldIp = ""
-    try { oldIp = (child.getDataValue('ip') ?: "").toString().trim() } catch (Throwable ignored) { }
+    try { oldIp = (child.getDataValue('ip') ?: "").toString().trim() } catch (Throwable t) { log.debug "oldIp assignment failed: ${t.message}" }
     return oldIp && newIp && oldIp != newIp
 }
 
@@ -1264,12 +1265,12 @@ Boolean isMasterSwitchSelected() {
         def value = settings[settingName]
         if (value == null) return true
         return truthy(value)
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "isMasterSwitchSelected() settings lookup failed: ${t.message}" }
     try {
         def value = this."${settingName}"
         if (value == null) return true
         return truthy(value)
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "isMasterSwitchSelected() property lookup failed: ${t.message}" }
     return true
 }
 
@@ -1280,8 +1281,8 @@ String childSelectSettingName(String uidValue) {
 
 Boolean isChildUidSelected(String uidValue) {
     String settingName = childSelectSettingName(uidValue)
-    try { return truthy(settings[settingName]) } catch (Throwable ignored) { }
-    try { return truthy(this."${settingName}") } catch (Throwable ignored) { }
+    try { return truthy(settings[settingName]) } catch (Throwable t) { log.debug "truthy(...) failed: ${t.message}" }
+    try { return truthy(this."${settingName}") } catch (Throwable t) { log.debug "truthy(...) failed: ${t.message}" }
     return false
 }
 
@@ -1297,9 +1298,9 @@ List selectedChildUidsFromCheckboxes() {
 void clearChildSelectionSettings() {
     try {
         childCreationOptions()?.keySet()?.each { uid ->
-            try { app.removeSetting(childSelectSettingName(uid.toString())) } catch (Throwable ignoredInner) { }
+            try { app.removeSetting(childSelectSettingName(uid.toString())) } catch (Throwable t) { log.debug "removeSetting(selectChild) failed: ${t.message}" }
         }
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "clearChildSelectionSettings() failed: ${t.message}" }
 }
 
 
@@ -1339,9 +1340,9 @@ void renderDiscoveredLightRenameInputs() {
 String discoveredLightRenameSettingValue(String uidValue) {
     String settingName = discoveredLightRenameSettingName(uidValue)
     String value = ""
-    try { value = (settings[settingName] ?: "").toString().trim() } catch (Throwable ignored) { }
+    try { value = (settings[settingName] ?: "").toString().trim() } catch (Throwable t) { log.debug "value assignment failed: ${t.message}" }
     if (!value) {
-        try { value = (this."${settingName}" ?: "").toString().trim() } catch (Throwable ignored) { }
+        try { value = (this."${settingName}" ?: "").toString().trim() } catch (Throwable t) { log.debug "value assignment failed: ${t.message}" }
     }
     if (value.equalsIgnoreCase("Optional alternative local name")) return ""
     return value
@@ -1380,14 +1381,14 @@ void renameDiscoveredLightsFromSettings() {
 
             def existing = getChildDevice(childDniForRow(row))
             if (existing) {
-                try { existing.setLabel(childLabelForRow(row)) } catch (Throwable ignored) { }
-                try { existing.updateDataValue("displayLabel", childLabelForRow(row)) } catch (Throwable ignored) { }
-                try { existing.updateDataValue("localLabel", newName) } catch (Throwable ignored) { }
-                try { existing.sendEvent(name: "label", value: childLabelForRow(row), displayed: false) } catch (Throwable ignored) { }
+                try { existing.setLabel(childLabelForRow(row)) } catch (Throwable t) { log.debug "existing.setLabel(...) failed: ${t.message}" }
+                try { existing.updateDataValue("displayLabel", childLabelForRow(row)) } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
+                try { existing.updateDataValue("localLabel", newName) } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
+                try { existing.sendEvent(name: "label", value: childLabelForRow(row), displayed: false) } catch (Throwable t) { log.debug "sendEvent(label) failed: ${t.message}" }
             }
 
             renamed << "${html(oldDisplay)} &rarr; ${html(childLabelForRow(row))}"
-            try { app.updateSetting(discoveredLightRenameSettingName(uid), [type: "text", value: ""]) } catch (Throwable ignored) { }
+            try { app.updateSetting(discoveredLightRenameSettingName(uid), [type: "text", value: ""]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
         } catch (Throwable t) {
             failed << "${html(row.label ?: uid)}: ${html(safeMessage(t.message))}"
         }
@@ -1421,8 +1422,8 @@ void renderChildRenameInputs() {
     children.each { child ->
         String dni = ""
         String currentName = ""
-        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
-        try { currentName = html(child.displayName?.toString() ?: child.name?.toString() ?: dni) } catch (Throwable ignored) { currentName = dni }
+        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
+        try { currentName = html(child.displayName?.toString() ?: child.name?.toString() ?: dni) } catch (Throwable t) { log.debug "currentName assignment failed: ${t.message}"; currentName = dni }
         input childRenameSettingNameForDni(dni), "text",
             title: "Rename ${currentName}",
             description: "Leave blank to keep current name.",
@@ -1434,8 +1435,8 @@ void renderChildRenameInputs() {
 
 String childRenameSettingValue(String dniValue) {
     String settingName = childRenameSettingNameForDni(dniValue)
-    try { return (settings[settingName] ?: "").toString().trim() } catch (Throwable ignored) { }
-    try { return (this."${settingName}" ?: "").toString().trim() } catch (Throwable ignored) { }
+    try { return (settings[settingName] ?: "").toString().trim() } catch (Throwable t) { log.debug "childRenameSettingValue() settings lookup failed: ${t.message}" }
+    try { return (this."${settingName}" ?: "").toString().trim() } catch (Throwable t) { log.debug "childRenameSettingValue() property lookup failed: ${t.message}" }
     return ""
 }
 
@@ -1466,8 +1467,8 @@ void renameManagedChildDevicesFromSettings() {
     children.each { child ->
         String dni = ""
         String oldName = ""
-        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
-        try { oldName = child.displayName?.toString() ?: child.name?.toString() ?: dni } catch (Throwable ignored) { oldName = dni }
+        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
+        try { oldName = child.displayName?.toString() ?: child.name?.toString() ?: dni } catch (Throwable t) { log.debug "oldName assignment failed: ${t.message}"; oldName = dni }
 
         String newName = childRenameSettingValue(dni)
         if (!newName) return
@@ -1487,12 +1488,12 @@ void renameManagedChildDevicesFromSettings() {
                 row.childStatus = "Renamed"
                 String key = (match.key ?: row.id ?: row.uid ?: row.lanUid)?.toString()
                 if (key) curated[key] = row
-                try { child.updateDataValue("displayLabel", newName) } catch (Throwable ignored) { }
-                try { child.updateDataValue("localLabel", newName) } catch (Throwable ignored) { }
-                try { child.sendEvent(name: "label", value: newName, displayed: false) } catch (Throwable ignored) { }
+                try { child.updateDataValue("displayLabel", newName) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
+                try { child.updateDataValue("localLabel", newName) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
+                try { child.sendEvent(name: "label", value: newName, displayed: false) } catch (Throwable t) { log.debug "sendEvent(label) failed: ${t.message}" }
             }
             renamed << "${html(oldName)} &rarr; ${html(newName)}"
-            try { app.updateSetting(childRenameSettingNameForDni(dni), [type: "text", value: ""]) } catch (Throwable ignored) { }
+            try { app.updateSetting(childRenameSettingNameForDni(dni), [type: "text", value: ""]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
         } catch (Throwable t) {
             failed << "${html(oldName)}: ${html(safeMessage(t.message))}"
         }
@@ -1594,9 +1595,9 @@ void removeSavedRowIfNoInstalledChild(String uidValue) {
 
     curated.remove(uid)
     atomicState.curatedRows = curated
-    try { app.removeSetting(childSelectSettingName(uid)) } catch (Throwable ignored) { }
-    try { app.removeSetting(discoveredLightRenameSettingName(uid)) } catch (Throwable ignored) { }
-    try { app.removeSetting(removeRowButtonName(uid)) } catch (Throwable ignored) { }
+    try { app.removeSetting(childSelectSettingName(uid)) } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
+    try { app.removeSetting(discoveredLightRenameSettingName(uid)) } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
+    try { app.removeSetting(removeRowButtonName(uid)) } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
     atomicState.rowRemovalResult = "Removed ${html(childLabelForRow(row))} (${uid}) from the saved device table."
 }
 
@@ -1659,9 +1660,9 @@ String normaliseDriverDisplayName(String value) {
 
 String installedDriverName(child) {
     if (!child) return ""
-    try { return child.typeName?.toString() ?: "" } catch (Throwable ignored) { }
-    try { return child.getTypeName()?.toString() ?: "" } catch (Throwable ignored) { }
-    try { return child.getDataValue('driverType')?.toString() ?: "" } catch (Throwable ignored) { }
+    try { return child.typeName?.toString() ?: "" } catch (Throwable t) { log.debug "child lookup failed: ${t.message}" }
+    try { return child.getTypeName()?.toString() ?: "" } catch (Throwable t) { log.debug "child.getTypeName(...) failed: ${t.message}" }
+    try { return child.getDataValue('driverType')?.toString() ?: "" } catch (Throwable t) { log.debug "child.getDataValue(...) failed: ${t.message}" }
     return ""
 }
 
@@ -1742,7 +1743,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
                     skipped << "${html(label)}: installed driver is '${html(currentDriver)}', expected '${html(driverType)}'. Hubitat cannot safely change this child driver from the parent app; delete/recreate the child or change its driver manually."
                     return
                 }
-                try { existing.setLabel(label) } catch (Throwable ignored) { }
+                try { existing.setLabel(label) } catch (Throwable t) { log.debug "existing.setLabel(...) failed: ${t.message}" }
                 updateChildDataValues(existing, row, driverType)
                 row.childDni = dni
                 row.childDriver = driverType
@@ -1767,7 +1768,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
                 row.childStatus = "Created"
                 created << "${html(label)} (${html(driverType)})"
                 syncChildRuntimeAttributes(child, row, driverType)
-                try { child.refresh() } catch (Throwable ignored) { }
+                try { child.refresh() } catch (Throwable t) { log.debug "child.refresh(...) failed: ${t.message}" }
             }
             curated[row.id ?: row.uid ?: uid] = row
         } catch (com.hubitat.app.exception.UnknownDeviceTypeException e) {
@@ -1808,8 +1809,8 @@ void enableDefaultStatusPollingAfterChildCreation() {
     // Safe default after child creation: LAN-only LIGHT.GET_POWER polling every 2 minutes.
     // This does not call the LIFX Cloud API, firmware discovery, product/version lookup,
     // brightness polling, colour polling or full child refresh.
-    try { app.updateSetting("lifxStatusPollingEnabled", [type: "bool", value: true]) } catch (Throwable ignored) { }
-    try { app.updateSetting("lifxStatusPollIntervalMinutes", [type: "enum", value: "2"]) } catch (Throwable ignored) { }
+    try { app.updateSetting("lifxStatusPollingEnabled", [type: "bool", value: true]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
+    try { app.updateSetting("lifxStatusPollIntervalMinutes", [type: "enum", value: "2"]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
     try {
         configureStatusPolling(false)
         atomicState.statusPollingResult = "Timed child status polling enabled by child-device creation: on/off status only, every 2 minutes."
@@ -1853,7 +1854,7 @@ Map childDataMap(Map row, String driverType) {
 
 void updateChildDataValues(child, Map row, String driverType) {
     childDataMap(row, driverType).each { k, v ->
-        try { child.updateDataValue(k.toString(), v == null ? "" : v.toString()) } catch (Throwable ignored) { }
+        try { child.updateDataValue(k.toString(), v == null ? "" : v.toString()) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
     }
     syncChildRuntimeAttributes(child, row, driverType)
 }
@@ -1864,18 +1865,18 @@ void syncChildRuntimeAttributes(child, Map row, String driverType = "") {
     // Data values drive command routing, but Hubitat's Commands page shows current-state
     // attributes. When an IP address changes, update both immediately so users do not
     // need to manually Initialize the child device to clear the old Lan Ip display.
-    try { child.sendEvent(name: "uid", value: "${lanUidForRow(row) ?: cloudUidForRow(row) ?: ''}", displayed: false) } catch (Throwable ignored) { }
-    try { child.sendEvent(name: "lanIp", value: "${row.ip ?: ''}", displayed: false) } catch (Throwable ignored) { }
-    try { child.sendEvent(name: "label", value: "${childLabelForRow(row)}", displayed: false) } catch (Throwable ignored) { }
+    try { child.sendEvent(name: "uid", value: "${lanUidForRow(row) ?: cloudUidForRow(row) ?: ''}", displayed: false) } catch (Throwable t) { log.debug "sendEvent(uid) failed: ${t.message}" }
+    try { child.sendEvent(name: "lanIp", value: "${row.ip ?: ''}", displayed: false) } catch (Throwable t) { log.debug "sendEvent(lanIp) failed: ${t.message}" }
+    try { child.sendEvent(name: "label", value: "${childLabelForRow(row)}", displayed: false) } catch (Throwable t) { log.debug "sendEvent(label) failed: ${t.message}" }
 
     if (truthy(row.hasVariableColorTemp)) {
         Integer kelvin = safeInt(row.kelvin) ?: safeInt(row.colorTemperature) ?: null
         if (kelvin) {
-            try { child.sendEvent(name: "colorTemperature", value: kelvin, displayed: false) } catch (Throwable ignored) { }
+            try { child.sendEvent(name: "colorTemperature", value: kelvin, displayed: false) } catch (Throwable t) { log.debug "sendEvent(colorTemperature) failed: ${t.message}" }
         }
     }
     if (driverType) {
-        try { child.updateDataValue("driverType", driverType.toString()) } catch (Throwable ignored) { }
+        try { child.updateDataValue("driverType", driverType.toString()) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
     }
 }
 
@@ -1898,10 +1899,10 @@ void createOrUpdateFastGroupChildDevice() {
     try {
         def existing = getChildDevice(dni)
         if (existing) {
-            try { existing.setLabel(label) } catch (Throwable ignored) { }
-            try { existing.updateDataValue("driverType", driverType) } catch (Throwable ignored) { }
-            try { existing.updateDataValue("groupMode", "fast-bulk") } catch (Throwable ignored) { }
-            try { existing.updateDataValue("managedBy", "LIFX Light Manager") } catch (Throwable ignored) { }
+            try { existing.setLabel(label) } catch (Throwable t) { log.debug "existing.setLabel(...) failed: ${t.message}" }
+            try { existing.updateDataValue("driverType", driverType) } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
+            try { existing.updateDataValue("groupMode", "fast-bulk") } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
+            try { existing.updateDataValue("managedBy", "LIFX Light Manager") } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
             refreshMasterSwitchMembership(existing)
             atomicState.childCreateResult = "Updated LIFX MASTER SWITCH device: ${html(label)}"
             return
@@ -1937,7 +1938,7 @@ List<String> managedLifxDriverNames() {
 
 String childDataValue(child, String key) {
     if (!child || !key) return ""
-    try { return child.getDataValue(key)?.toString() ?: "" } catch (Throwable ignored) { }
+    try { return child.getDataValue(key)?.toString() ?: "" } catch (Throwable t) { log.debug "child.getDataValue(...) failed: ${t.message}" }
     return ""
 }
 
@@ -1945,9 +1946,9 @@ Boolean isManagedLifxLightChild(child) {
     if (!child) return false
     String dni = ""
     String type = ""
-    try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
+    try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
     if (dni == fastGroupDni()) return false
-    try { type = child.typeName?.toString() ?: "" } catch (Throwable ignored) { }
+    try { type = child.typeName?.toString() ?: "" } catch (Throwable t) { log.debug "type assignment failed: ${t.message}" }
     if (!type) type = childDataValue(child, "driverType")
     return managedLifxDriverNames().contains(type)
 }
@@ -1958,8 +1959,8 @@ List managedLifxLightChildren() {
         .sort { a, b ->
             String al = ""
             String bl = ""
-            try { al = a.displayName?.toString()?.toLowerCase() ?: "" } catch (Throwable ignored) { }
-            try { bl = b.displayName?.toString()?.toLowerCase() ?: "" } catch (Throwable ignored) { }
+            try { al = a.displayName?.toString()?.toLowerCase() ?: "" } catch (Throwable t) { log.debug "al assignment failed: ${t.message}" }
+            try { bl = b.displayName?.toString()?.toLowerCase() ?: "" } catch (Throwable t) { log.debug "bl assignment failed: ${t.message}" }
             return al <=> bl
         }
 }
@@ -1975,9 +1976,9 @@ Map rowForManagedChild(child) {
     String dni = ""
     String type = ""
     String label = ""
-    try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
-    try { type = child.typeName?.toString() ?: "" } catch (Throwable ignored) { }
-    try { label = child.displayName?.toString() ?: "" } catch (Throwable ignored) { }
+    try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
+    try { type = child.typeName?.toString() ?: "" } catch (Throwable t) { log.debug "type assignment failed: ${t.message}" }
+    try { label = child.displayName?.toString() ?: "" } catch (Throwable t) { log.debug "label assignment failed: ${t.message}" }
 
     String uidFromDni = dni.startsWith("lifx-curated-") ? dni.replaceFirst("lifx-curated-", "") : dni
     String lanUid = normalisedUid(childDataValue(child, "lanUid") ?: childDataValue(child, "uid") ?: uidFromDni)
@@ -2029,12 +2030,12 @@ Integer statusPollIntervalMinutes() {
 }
 
 Boolean statusPollingEnabled() {
-    try { return lifxStatusPollingEnabled == true || lifxStatusPollingEnabled?.toString() == "true" } catch (Throwable ignored) { }
+    try { return lifxStatusPollingEnabled == true || lifxStatusPollingEnabled?.toString() == "true" } catch (Throwable t) { log.debug "lifxStatusPollingEnabled lookup failed: ${t.message}" }
     return false
 }
 
 void configureStatusPolling(Boolean showResult = true) {
-    try { unschedule("pollManagedChildSwitchStatus") } catch (Throwable ignored) { }
+    try { unschedule("pollManagedChildSwitchStatus") } catch (Throwable t) { log.debug "unschedule(...) failed: ${t.message}" }
 
     if (!statusPollingEnabled()) {
         if (showResult) atomicState.statusPollingResult = "Timed child status polling is disabled."
@@ -2054,7 +2055,7 @@ void configureStatusPolling(Boolean showResult = true) {
 @SuppressWarnings("unused")
 def pollManagedChildSwitchStatus() {
     if (!statusPollingEnabled()) {
-        try { unschedule("pollManagedChildSwitchStatus") } catch (Throwable ignored) { }
+        try { unschedule("pollManagedChildSwitchStatus") } catch (Throwable t) { log.debug "unschedule(...) failed: ${t.message}" }
         return
     }
 
@@ -2090,21 +2091,21 @@ void refreshMasterSwitchMembership(masterDevice = null) {
     Integer onCount = 0
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
-        try { if (child?.currentValue('switch') == 'on') onCount++ } catch (Throwable ignored) { }
+        try { if (child?.currentValue('switch') == 'on') onCount++ } catch (Throwable t) { log.debug "child.currentValue(switch) failed: ${t.message}" }
     }
-    try { dev.updateDataValue("memberCount", total.toString()) } catch (Throwable ignored) { }
-    try { dev.sendEvent(name: "memberCount", value: total) } catch (Throwable ignored) { }
-    try { dev.sendEvent(name: "onMemberCount", value: onCount) } catch (Throwable ignored) { }
+    try { dev.updateDataValue("memberCount", total.toString()) } catch (Throwable t) { log.debug "dev.updateDataValue(...) failed: ${t.message}" }
+    try { dev.sendEvent(name: "memberCount", value: total) } catch (Throwable t) { log.debug "sendEvent(memberCount) failed: ${t.message}" }
+    try { dev.sendEvent(name: "onMemberCount", value: onCount) } catch (Throwable t) { log.debug "sendEvent(onMemberCount) failed: ${t.message}" }
 }
 
 void groupChildOn(device) {
     sendBulkSetPower(65535, 0)
-    try { device.sendEvent(name: "switch", value: "on") } catch (Throwable ignored) { }
+    try { device.sendEvent(name: "switch", value: "on") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void groupChildOff(device) {
     sendBulkSetPower(0, 0)
-    try { device.sendEvent(name: "switch", value: "off") } catch (Throwable ignored) { }
+    try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void groupChildSetLevel(device, value, duration = 0) {
@@ -2113,7 +2114,7 @@ void groupChildSetLevel(device, value, duration = 0) {
     try {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "groupChildSetLevel() sendEvent failed: ${t.message}" }
 }
 
 void groupChildSetColor(device, Map colorMap, duration = 0) {
@@ -2131,7 +2132,7 @@ void groupChildSetColor(device, Map colorMap, duration = 0) {
         device.sendEvent(name: "colorTemperature", value: requestedKelvin)
         device.sendEvent(name: "colorMode", value: "RGB")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "groupChildSetColor() sendEvent failed: ${t.message}" }
 }
 
 void groupChildSetColorTemperature(device, temperature = 3000, level = 75, duration = 0) {
@@ -2143,7 +2144,7 @@ void groupChildSetColorTemperature(device, temperature = 3000, level = 75, durat
         device.sendEvent(name: "level", value: lvl)
         device.sendEvent(name: "colorMode", value: "CT")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "groupChildSetColorTemperature() sendEvent failed: ${t.message}" }
 }
 
 void groupChildRefresh(device) {
@@ -2152,14 +2153,14 @@ void groupChildRefresh(device) {
     Integer onCount = 0
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
-        try { if (child?.currentValue('switch') == 'on') onCount++ } catch (Throwable ignored) { }
+        try { if (child?.currentValue('switch') == 'on') onCount++ } catch (Throwable t) { log.debug "child.currentValue(switch) failed: ${t.message}" }
     }
     try {
         device.sendEvent(name: "switch", value: onCount > 0 ? "on" : "off")
         device.sendEvent(name: "level", value: onCount > 0 ? 100 : 0)
         device.sendEvent(name: "memberCount", value: total)
         device.sendEvent(name: "onMemberCount", value: onCount)
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "groupChildRefresh() sendEvent failed: ${t.message}" }
 }
 
 String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
@@ -2183,9 +2184,9 @@ void sendBulkSetPower(Integer power, Integer durationMs = 0) {
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
-            try { child.sendEvent(name: "switch", value: sw) } catch (Throwable ignored) { }
+            try { child.sendEvent(name: "switch", value: sw) } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
             if ((power ?: 0) == 0) {
-                try { child.sendEvent(name: "level", value: 0) } catch (Throwable ignored) { }
+                try { child.sendEvent(name: "level", value: 0) } catch (Throwable t) { log.debug "sendEvent(level) failed: ${t.message}" }
             }
         }
     }
@@ -2219,7 +2220,7 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
             try {
                 child.sendEvent(name: "level", value: level)
                 child.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
-            } catch (Throwable ignored) { }
+            } catch (Throwable t) { log.debug "sendBulkSetLevel() child sendEvent failed: ${t.message}" }
         }
     }
 }
@@ -2262,7 +2263,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
                 }
                 child.sendEvent(name: "level", value: level)
                 child.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
-            } catch (Throwable ignored) { }
+            } catch (Throwable t) { log.debug "sendBulkSetColorOrLevel() child sendEvent failed: ${t.message}" }
         }
     }
 }
@@ -2286,7 +2287,7 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
                 child.sendEvent(name: "level", value: lvl)
                 child.sendEvent(name: "colorMode", value: "CT")
                 child.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
-            } catch (Throwable ignored) { }
+            } catch (Throwable t) { log.debug "sendBulkSetColorTemperature() child sendEvent failed: ${t.message}" }
         }
     }
 }
@@ -2340,13 +2341,13 @@ void childOnOffFallback(device, String value) {
 void childOn(device) {
     Map row = rowForChild(device)
     sendSetPower(row, 65535, 0)
-    try { device.sendEvent(name: "switch", value: "on") } catch (Throwable ignored) { }
+    try { device.sendEvent(name: "switch", value: "on") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void childOff(device) {
     Map row = rowForChild(device)
     sendSetPower(row, 0, 0)
-    try { device.sendEvent(name: "switch", value: "off") } catch (Throwable ignored) { }
+    try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void childSetLevel(device, value, duration = 0) {
@@ -2360,7 +2361,7 @@ void childSetLevel(device, value, duration = 0) {
     try {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
@@ -2374,7 +2375,7 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
         device.sendEvent(name: "level", value: lvl)
         device.sendEvent(name: "colorMode", value: "CT")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "childSetColorTemperature() sendEvent failed: ${t.message}" }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
@@ -2392,7 +2393,7 @@ void childSetColor(device, Map colorMap, duration = 0) {
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "colorMode", value: "RGB")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "childSetColor() sendEvent failed: ${t.message}" }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
@@ -2408,8 +2409,8 @@ void childSetInfraredLevel(device, value) {
     Map row = rowForChild(device)
     Integer level = clampInt(safeInt(value) ?: 0, 0, 100)
     sendLifxToRow(row, 122, u16le(scalePercentToLifx(level)), true, false, "parseChildLifx", 1, 0) // LIGHT.SET_INFRARED, ack requested
-    try { device.sendEvent(name: "IRLevel", value: level) } catch (Throwable ignored) { }
-    try { device.sendEvent(name: "infraredLevel", value: level) } catch (Throwable ignored) { }
+    try { device.sendEvent(name: "IRLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(IRLevel) failed: ${t.message}" }
+    try { device.sendEvent(name: "infraredLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(infraredLevel) failed: ${t.message}" }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
@@ -2429,7 +2430,7 @@ void refreshChildSoon(device, Integer delayMs = 350) {
     try {
         pauseExecution(clampInt(delayMs ?: 350, 100, 1200))
         childRefresh(device)
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "refreshChildSoon() failed: ${t.message}" }
 }
 
 void sendSetPower(Map row, Integer power, Integer durationMs = 0) {
@@ -2557,11 +2558,11 @@ Integer scalePercentToLifx(value) {
 }
 
 Integer scaleDown100(value) {
-    try { return Math.round(((value as Integer) * 100.0d) / 65535.0d) as Integer } catch (Throwable ignored) { return 0 }
+    try { return Math.round(((value as Integer) * 100.0d) / 65535.0d) as Integer } catch (Throwable t) { log.debug "scaleDown100() failed: ${t.message}"; return 0 }
 }
 
 Integer durationMs(value) {
-    try { return Math.max(0, Math.round((value as BigDecimal) * 1000.0d) as Integer) } catch (Throwable ignored) { return 0 }
+    try { return Math.max(0, Math.round((value as BigDecimal) * 1000.0d) as Integer) } catch (Throwable t) { log.debug "durationMs() failed: ${t.message}"; return 0 }
 }
 
 Integer clampInt(Integer v, Integer lo, Integer hi) {
@@ -2725,7 +2726,8 @@ Long ipSortKey(String ip) {
         Long key = 0L
         parts.each { p -> key = (key << 8) | (p.toInteger() & 0xff) }
         return key
-    } catch (Throwable ignored) {
+    } catch (Throwable t) {
+        log.debug "ipSortKey() failed: ${t.message}"
         return null
     }
 }
@@ -2815,7 +2817,8 @@ String uidMatchType(String cloudUid, String lanUid) {
         BigInteger lb = new BigInteger(l, 16)
         if (lb == cb.add(BigInteger.ONE)) return "cloud+1"
         if (lb == cb.subtract(BigInteger.ONE)) return "cloud-1"
-    } catch (Throwable ignored) {
+    } catch (Throwable t) {
+        log.debug "uidMatchType() failed: ${t.message}"
     }
     return ""
 }
@@ -2907,19 +2910,19 @@ String curatedLastSeen(Map row) {
 String formatDateTime(value) {
     Long ms = epochMillis(value)
     if (!ms) return ""
-    try { return new Date(ms).format("dd-MMM HH:mm", location.timeZone) } catch (Throwable ignored) { return "" }
+    try { return new Date(ms).format("dd-MMM HH:mm", location.timeZone) } catch (Throwable t) { log.debug "formatDateTime() failed: ${t.message}"; return "" }
 }
 
 Long epochMillis(value) {
     if (!value) return 0L
     try {
         if (value instanceof Number) return (value as Long)
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "epochMillis() numeric conversion failed: ${t.message}" }
 
     String s = value.toString()?.trim()
     if (!s) return 0L
 
-    try { return (s as Long) } catch (Throwable ignored) { }
+    try { return (s as Long) } catch (Throwable t) { log.debug "epochMillis() long parse failed: ${t.message}" }
 
     List patterns = [
         "yyyy-MM-dd'T'HH:mm:ss.SSSX",
@@ -2934,33 +2937,10 @@ Long epochMillis(value) {
             def parser = new java.text.SimpleDateFormat(pattern)
             parser.setTimeZone(java.util.TimeZone.getTimeZone("UTC"))
             return parser.parse(s).time
-        } catch (Throwable ignored) { }
+        } catch (Throwable t) { log.debug "epochMillis() pattern '${pattern}' failed: ${t.message}" }
     }
 
     return 0L
-}
-
-Integer compareIp(a, b) {
-    Long av = ipSortValue(a)
-    Long bv = ipSortValue(b)
-    return av <=> bv
-}
-
-Long ipSortValue(value) {
-    if (!value) return Long.MAX_VALUE
-    try {
-        List parts = value.toString().tokenize('.')
-        if (parts.size() != 4) return Long.MAX_VALUE
-        Long result = 0L
-        parts.each { part ->
-            Integer n = part as Integer
-            if (n < 0 || n > 255) throw new RuntimeException("Invalid IP octet")
-            result = (result << 8) + n
-        }
-        return result
-    } catch (Throwable ignored) {
-        return Long.MAX_VALUE
-    }
 }
 
 // ---------------- Product fallback capability mapping ----------------
@@ -2989,7 +2969,7 @@ String driverModeForProduct(value) {
 }
 
 Integer safeInt(value) {
-    try { return value == null ? null : (value as Integer) } catch (Throwable ignored) { return null }
+    try { return value == null ? null : (value as Integer) } catch (Throwable t) { log.debug "safeInt() failed: ${t.message}"; return null }
 }
 
 // ---------------- Packet construction ----------------
@@ -3042,7 +3022,7 @@ String hubSubnet() {
         String hubIp = location.hubs[0]?.localIP ?: location.hub?.localIP
         def m = hubIp =~ /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/
         if (m) return "${m[0][1]}."
-    } catch (Throwable ignored) { }
+    } catch (Throwable t) { log.debug "hubSubnet() failed: ${t.message}" }
     return null
 }
 

@@ -1,8 +1,8 @@
 /*
  * LIFX Local Colour
  * Namespace: Hubitat Integrations
- * Version: 1.3
- * Parent app: LIFX Light Manager 1.3+
+ * Version: 1.4
+ * Parent app: LIFX Light Manager 1.4+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -34,34 +34,40 @@ metadata {
 def installed() { initialize() }
 def updated() { initialize() }
 def initialize() {
-    try { sendEvent(name: "uid", value: getDataValue('uid') ?: deviceNetworkId) } catch (Throwable ignored) { }
-    try { sendEvent(name: "lanIp", value: getDataValue('ip') ?: '') } catch (Throwable ignored) { }
-    try { sendEvent(name: "hostFirmware", value: getDataValue('hostFirmware') ?: '') } catch (Throwable ignored) { }
-    try { sendEvent(name: "hostFirmwareBuild", value: getDataValue('hostFirmwareBuild') ?: '') } catch (Throwable ignored) { }
+    try { sendEvent(name: "uid", value: getDataValue('uid') ?: deviceNetworkId) } catch (Throwable t) { log.debug "sendEvent(uid) failed: ${t.message}" }
+    try { sendEvent(name: "lanIp", value: getDataValue('ip') ?: '') } catch (Throwable t) { log.debug "sendEvent(lanIp) failed: ${t.message}" }
+    try { sendEvent(name: "hostFirmware", value: getDataValue('hostFirmware') ?: '') } catch (Throwable t) { log.debug "sendEvent(hostFirmware) failed: ${t.message}" }
+    try { sendEvent(name: "hostFirmwareBuild", value: getDataValue('hostFirmwareBuild') ?: '') } catch (Throwable t) { log.debug "sendEvent(hostFirmwareBuild) failed: ${t.message}" }
     initialiseGoogleSafeState()
-    try { refresh() } catch (Throwable ignored) { }
+    try { refresh() } catch (Throwable t) { log.debug "refresh(...) failed: ${t.message}" }
 }
 
 private void initialiseGoogleSafeState() {
-    try { if (device.currentValue("switch") == null) sendEvent(name: "switch", value: "off", displayed: false) } catch (Throwable ignored) { }
-    try { if (device.currentValue("level") == null) sendEvent(name: "level", value: 100, displayed: false) } catch (Throwable ignored) { }
-    try { if (device.currentValue("colorTemperature") == null) sendEvent(name: "colorTemperature", value: 3500, displayed: false) } catch (Throwable ignored) { }
-    try { if (device.currentValue("hue") == null) sendEvent(name: "hue", value: 0, displayed: false) } catch (Throwable ignored) { }
-    try { if (device.currentValue("saturation") == null) sendEvent(name: "saturation", value: 0, displayed: false) } catch (Throwable ignored) { }
-    try { if (device.currentValue("colorMode") == null) sendEvent(name: "colorMode", value: "CT", displayed: false) } catch (Throwable ignored) { }
-    try { if (device.currentValue("colorName") == null) sendEvent(name: "colorName", value: "Soft White", displayed: false) } catch (Throwable ignored) { }
+    try { if (device.currentValue("switch") == null) sendEvent(name: "switch", value: "off", displayed: false) } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
+    try { if (device.currentValue("level") == null) sendEvent(name: "level", value: 100, unit: "%", displayed: false) } catch (Throwable t) { log.debug "sendEvent(level) failed: ${t.message}" }
+    try { if (device.currentValue("colorTemperature") == null) sendEvent(name: "colorTemperature", value: 3500, unit: "K", displayed: false) } catch (Throwable t) { log.debug "sendEvent(colorTemperature) failed: ${t.message}" }
+    try { if (device.currentValue("hue") == null) sendEvent(name: "hue", value: 0, displayed: false) } catch (Throwable t) { log.debug "sendEvent(hue) failed: ${t.message}" }
+    try { if (device.currentValue("saturation") == null) sendEvent(name: "saturation", value: 0, displayed: false) } catch (Throwable t) { log.debug "sendEvent(saturation) failed: ${t.message}" }
+    try { if (device.currentValue("colorMode") == null) sendEvent(name: "colorMode", value: "CT", displayed: false) } catch (Throwable t) { log.debug "sendEvent(colorMode) failed: ${t.message}" }
+    try { if (device.currentValue("colorName") == null) sendEvent(name: "colorName", value: "Soft White", displayed: false) } catch (Throwable t) { log.debug "sendEvent(colorName) failed: ${t.message}" }
 }
 def poll() { refresh() }
-def refresh() { parent.childRefresh(device) }
+def refresh() { if (!requireParent()) return; parent.childRefresh(device) }
 def on() { fastPower("on") }
 def off() { fastPower("off") }
 
+private Boolean requireParent() {
+    if (parent) return true
+    log.warn "No parent app; ${device.displayName} is orphaned and cannot be controlled"
+    return false
+}
+
 private String lifxIp() {
-    try { return (device.getDataValue('ip') ?: '').toString().trim() } catch (Throwable ignored) { return '' }
+    try { return (device.getDataValue('ip') ?: '').toString().trim() } catch (Throwable t) { log.debug "lifxIp() failed: ${t.message}"; return '' }
 }
 
 private Integer lifxPort() {
-    try { return ((device.getDataValue('port') ?: '56700') as String).toInteger() } catch (Throwable ignored) { return 56700 }
+    try { return ((device.getDataValue('port') ?: '56700') as String).toInteger() } catch (Throwable t) { log.debug "lifxPort() failed: ${t.message}"; return 56700 }
 }
 
 private void fastPower(String value) {
@@ -90,7 +96,7 @@ private void fastPower(String value) {
             timeout: 1
         ]
     ))
-    try { sendEvent(name: "switch", value: value, displayed: false) } catch (Throwable ignored) { }
+    try { sendEvent(name: "switch", value: value, displayed: false) } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
     // SetLightPower (117) does not change brightness on the bulb, so `level` is left untouched here.
 }
 
@@ -123,7 +129,8 @@ private Integer nextSequence() {
         seq = (seq + 1) & 0xFF
         state.fastSequence = seq
         return seq
-    } catch (Throwable ignored) {
+    } catch (Throwable t) {
+        log.debug "nextSequence() failed: ${t.message}"
         return 1
     }
 }
@@ -142,8 +149,8 @@ private String bytesToHex(List<Integer> bytes) {
     return (bytes ?: []).collect { String.format('%02X', (it ?: 0) & 0xFF) }.join('')
 }
 
-def setLevel(value, duration = 0) { parent.childSetLevel(device, value, duration) }
-def setColorTemperature(value, level = null, duration = 0) { parent.childSetColorTemperature(device, value, level, duration) }
-def setColor(Map value) { parent.childSetColor(device, value ?: [:], 0) }
-def setHue(value) { parent.childSetHue(device, value) }
-def setSaturation(value) { parent.childSetSaturation(device, value) }
+def setLevel(value, duration = 0) { if (!requireParent()) return; parent.childSetLevel(device, value, duration) }
+def setColorTemperature(value, level = null, duration = 0) { if (!requireParent()) return; parent.childSetColorTemperature(device, value, level, duration) }
+def setColor(Map value) { if (!requireParent()) return; parent.childSetColor(device, value ?: [:], value?.duration ?: 0) }
+def setHue(value) { if (!requireParent()) return; parent.childSetHue(device, value) }
+def setSaturation(value) { if (!requireParent()) return; parent.childSetSaturation(device, value) }

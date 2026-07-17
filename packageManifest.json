@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "minimumHEVersion": "1.0.0",
-  "dateReleased": "2026-07-17",
-  "releaseNotes": "1.3.0: standardizes all package, app and driver versions on plain semantic versioning (dropping the previous BX.X header format, which was interfering with Hubitat Package Manager's update detection). Component version history prior to 1.3.0 remains available in source control.",
+  "dateReleased": "2026-07-18",
+  "releaseNotes": "1.4.0: fixes a discovery-state race where an orphaned scheduled callback from a superseded run could corrupt a fresh run's state, adds a staleness timeout so a stuck discovery run can self-recover, removes the unreliable auto-restart of Discovery from the app's updated() lifecycle, adds a validation-first LAN rediscovery pass, adds per-row removal of stale saved-table entries, sorts diagnostic tables by IP address, replaces the Master Switch's free-text colour field with a proper colour-map picker, adds parent-app null guards and duration handling consistency across all child drivers, and replaces silent exception handling with debug-level logging throughout.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.3.0"
+      "version": "1.4.0"
     }
   ],
   "drivers": [
@@ -24,7 +24,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_White_Mono_Driver.groovy",
       "required": true,
-      "version": "1.3.0"
+      "version": "1.4.0"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2002",
@@ -32,7 +32,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Tunable_White_Driver.groovy",
       "required": true,
-      "version": "1.3.0"
+      "version": "1.4.0"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2003",
@@ -40,7 +40,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Colour_Driver.groovy",
       "required": true,
-      "version": "1.3.0"
+      "version": "1.4.0"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2004",
@@ -48,7 +48,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Plus_Colour_Driver.groovy",
       "required": true,
-      "version": "1.3.0"
+      "version": "1.4.0"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af3001",
@@ -56,7 +56,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Master_Switch_Driver.groovy",
       "required": true,
-      "version": "1.3.0"
+      "version": "1.4.0"
     }
   ]
 }
