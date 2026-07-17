@@ -1,8 +1,8 @@
 /*
  * LIFX Master Switch
  * Namespace: Hubitat Integrations
- * Version: B1.2.2
- * Parent app: LIFX Light Manager B1.2+
+ * Version: 1.3
+ * Parent app: LIFX Light Manager 1.3+
  *
  * Purpose:
  * - Aggregate master switch used for fast whole-fleet LAN control.
@@ -38,9 +38,9 @@ metadata {
 def installed() { initialize() }
 def updated() { initialize() }
 def initialize() {
-    sendEvent(name: "level", value: (defaultCtLevel ?: 75) as Integer)
-    if (device.currentValue("switch") == null) sendEvent(name: "switch", value: "off")
-    refresh()
+    try { if (device.currentValue("level") == null) sendEvent(name: "level", value: (defaultCtLevel ?: 75) as Integer) } catch (Throwable ignored) { }
+    try { if (device.currentValue("switch") == null) sendEvent(name: "switch", value: "off") } catch (Throwable ignored) { }
+    try { refresh() } catch (Throwable ignored) { }
 }
 def poll() { refresh() }
 def refresh() { parent.groupChildRefresh(device) }

@@ -1,8 +1,8 @@
 /*
  * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: B1.2.2
- * Parent app: LIFX Light Manager B1.2+
+ * Version: 1.3
+ * Parent app: LIFX Light Manager 1.3+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -97,7 +97,7 @@ private void fastPower(String value) {
         ]
     ))
     try { sendEvent(name: "switch", value: value, displayed: false) } catch (Throwable ignored) { }
-    if (value == 'off') { try { sendEvent(name: "level", value: 0, displayed: false) } catch (Throwable ignored) { } }
+    // SetLightPower (117) does not change brightness on the bulb, so `level` is left untouched here.
 }
 
 private String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {

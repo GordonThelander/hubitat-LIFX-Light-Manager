@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: B1.2
+ * Version: 1.3
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -57,22 +57,17 @@ def appButtonHandler(String btn) {
     if (btn == "createFastGroupBtn") createOrUpdateFastGroupChildDevice()
     if (btn == "advancedBtn") toggleAdvanced()
     if (btn == "clearAllBtn") clearAllData()
+    if (btn?.startsWith("removeRow_")) removeSavedRowIfNoInstalledChild(btn.substring("removeRow_".length()))
 }
 
 void handleDiscoveryButtonFallback() {
-    // Hubitat can occasionally persist a button click during the preferences update cycle
-    // instead of invoking appButtonHandler() on the first click after a code/UI change.
-    // Treat that persisted button value as a real Discovery click, clear it immediately,
-    // and only start discovery if a discovery run is not already active.
-    Boolean discoveryButtonWasPersisted = false
-    try { discoveryButtonWasPersisted = (settings?.discoverBtn != null) } catch (Throwable ignored) { }
-    if (!discoveryButtonWasPersisted) return
-
+    // Hubitat can occasionally persist a stray "discoverBtn" setting value across the
+    // preferences update cycle even when it was not a real, fresh button click (e.g. every
+    // time updated() fires while a discovery run is genuinely still in progress). Auto-starting
+    // discovery from here proved unreliable in practice - it could re-trigger mid-flight and
+    // reset a run that was already progressing normally. Just clear the stray value; if a click
+    // is ever genuinely missed, the user can press Discovery again.
     try { app.removeSetting("discoverBtn") } catch (Throwable ignored) { }
-    if (isDiscoveryRunning()) return
-
-    log.info "Discovery button fallback triggered from updated()"
-    startCombinedDiscovery()
 }
 
 def mainPage(params = null) {
@@ -95,7 +90,7 @@ def mainPage(params = null) {
 void renderMainPageContent(Boolean advanced) {
     section("LIFX discovery") {
         paragraph "Go to <a href='https://cloud.lifx.com/' target='_blank'>https://cloud.lifx.com/</a>, log in using your LIFX credentials, then use the top-right account menu to acquire a Personal Access Token. Paste that token below before running Discovery."
-        input "lifxCloudToken", "string",
+        input "lifxCloudToken", "password",
             title: "LIFX Personal Access Token",
             defaultValue: "",
             required: false,
@@ -104,6 +99,13 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "<div style='font-weight:bold;color:#cc0000'>${atomicState.tokenError}</div>"
         }
         input "discoverBtn", "button", title: "Discovery", submitOnChange: true
+        if ((atomicState.status ?: "idle") == "validating") {
+            paragraph "<div style='font-weight:bold;color:#0066cc'>Validating existing devices...</div>"
+        } else if (isDiscoveryRunning()) {
+            paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this could take up to 2 minutes on a standard /24 network</div>"
+        } else if ((atomicState.status ?: "idle") == "complete") {
+            paragraph "<div style='font-weight:bold;color:#008000'>Discovery Complete</div>"
+        }
         input "childNamePrefix", "text",
             title: "<b>Optional child device name prefix</b>",
             description: "Example: Lounge. Leave blank to use the detected label exactly.",
@@ -117,8 +119,8 @@ void renderMainPageContent(Boolean advanced) {
             childOptions.each { uid, title ->
                 String uidText = uid.toString()
                 Map row = childCreationRowsByUid()[normalisedUid(uidText)] as Map
-                String detected = (row?.label ?: uidText).toString()
-                String currentLocal = (row?.customLabel ?: row?.localLabel ?: "").toString().trim()
+                String detected = html((row?.label ?: uidText).toString())
+                String currentLocal = html((row?.customLabel ?: row?.localLabel ?: "").toString().trim())
 
                 Boolean defaultSelected = childSelectDefault(uidText)
                 if (defaultSelected) {
@@ -168,16 +170,6 @@ void renderMainPageContent(Boolean advanced) {
         input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced", submitOnChange: true
     }
 
-    if (isDiscoveryRunning()) {
-        section("Status") {
-            paragraph "<div style='font-weight:bold;color:#cc0000'>Network Discovery in progress - this could take up to 2 minutes on a standard /24 network, please wait for it to complete</div>"
-        }
-    } else if ((atomicState.status ?: "idle") == "complete") {
-        section("Status") {
-            paragraph "<div style='font-weight:bold;color:#008000'>Discovery completed</div>"
-        }
-    }
-
     if (atomicState.childCreateResult) {
         section("Child device creation") {
             paragraph atomicState.childCreateResult
@@ -210,6 +202,22 @@ void renderMainPageContent(Boolean advanced) {
         section("Advanced status") {
             paragraph statusHtml()
         }
+        section("Remove stale saved rows") {
+            paragraph "Rows below have no installed Hubitat child device and can be safely removed from the saved device table - for example, a device deleted from LIFX Cloud. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
+            List<Map> removable = removableSavedRows()
+            if (!removable) {
+                paragraph "No removable rows right now."
+            } else {
+                removable.each { row ->
+                    String uid = normalisedUid(row.id ?: row.uid)
+                    if (!uid) return
+                    input removeRowButtonName(uid), "button",
+                        title: "Remove ${html(childLabelForRow(row))} (${uid})",
+                        submitOnChange: true
+                }
+            }
+            if (atomicState.rowRemovalResult) paragraph atomicState.rowRemovalResult
+        }
         section("LIFX Cloud source table") {
             paragraph cloudTableHtml()
         }
@@ -224,7 +232,7 @@ void initialiseState() {
     if (atomicState.byIp == null) atomicState.byIp = [:]
     if (atomicState.cloudLights == null) atomicState.cloudLights = [:]
     if (atomicState.expectedIds == null) atomicState.expectedIds = [:]
-    if (atomicState.sequence == null) atomicState.sequence = 1
+    if (state.sequence == null) state.sequence = 1
     if (atomicState.status == null) atomicState.status = "idle"
     if (atomicState.phase == null) atomicState.phase = "Idle"
     if (atomicState.stats == null) atomicState.stats = emptyStats()
@@ -237,7 +245,8 @@ void initialiseState() {
     if (atomicState.discoveredRenameResult == null) atomicState.discoveredRenameResult = ""
     if (atomicState.childRenameResult == null) atomicState.childRenameResult = ""
     if (atomicState.statusPollingResult == null) atomicState.statusPollingResult = ""
-    if (lifxCloudToken == null) app.updateSetting("lifxCloudToken", [type: "string", value: ""])
+    if (atomicState.rowRemovalResult == null) atomicState.rowRemovalResult = ""
+    if (lifxCloudToken == null) app.updateSetting("lifxCloudToken", [type: "password", value: ""])
     if (fastGroupName == null) app.updateSetting("fastGroupName", [type: "text", value: "LIFX MASTER SWITCH"])
     try { app.updateSetting(masterSwitchSelectSettingName(), [type: "bool", value: true]) } catch (Throwable ignored) { }
 }
@@ -249,7 +258,17 @@ Map emptyStats() {
 // ---------------- Cloud-first locator flow ----------------
 
 Boolean isDiscoveryRunning() {
-    return ((atomicState.status ?: "idle") in ["cloud", "starting-lan", "broadcast", "sweep"])
+    return ((atomicState.status ?: "idle") in ["validating", "cloud", "starting-lan", "broadcast", "sweep"])
+}
+
+// A run that has looked "in progress" for far longer than the documented worst case (2 minutes)
+// is treated as abandoned rather than blocking every future Discovery click forever. This is a
+// deliberately generous ceiling - it only exists as a recovery path if something upstream leaves
+// status stuck without ever reaching "complete" or an error state.
+Boolean isDiscoveryRunStale() {
+    Long startedAt = (atomicState.discoveryRunStartedAt ?: 0L) as Long
+    if (!startedAt) return true
+    return (now() - startedAt) > 180000L
 }
 
 void toggleAdvanced() {
@@ -257,6 +276,15 @@ void toggleAdvanced() {
 }
 
 void startCombinedDiscovery() {
+    // Hubitat can route a single Discovery click through both appButtonHandler() and the
+    // updated()-triggered handleDiscoveryButtonFallback() (see that method's comment). Without
+    // this guard, the second invocation would reset validationStartedAt and the in-flight probe
+    // state from the first invocation mid-flight, making every row look unconfirmed and falling
+    // through to a full rediscovery even though nothing actually failed to respond.
+    if (isDiscoveryRunning() && !isDiscoveryRunStale()) {
+        log.info "Discovery already running - ignoring duplicate start request"
+        return
+    }
     unschedule()
     String token = configuredLifxCloudToken()
     if (!token) {
@@ -269,37 +297,115 @@ void startCombinedDiscovery() {
     }
     atomicState.tokenError = null
     atomicState.runLanAfterCloud = true
-    atomicState.forceFullLanDiscovery = true
+    // Self-rescheduling callbacks (broadcastPulse, processSweepBatch) capture this at entry and
+    // re-check it before rescheduling themselves, so a callback from a superseded run stops
+    // instead of continuing to run in parallel with - and corrupting the state of - a fresh run.
+    atomicState.discoveryRunId = ((atomicState.discoveryRunId ?: 0) as Integer) + 1
+    atomicState.discoveryRunStartedAt = now()
     atomicState.records = [:]
     atomicState.byIp = [:]
-    clearSavedLanDiscoveryFields()
     atomicState.stats = emptyStats()
-    atomicState.status = "cloud"
+    atomicState.status = "validating"
     atomicState.discoveryMode = "cloud-led"
-    atomicState.phase = "Network Discovery in progress - this could take up to 2 minutes on a standard /24 network, please wait for it to complete"
-    atomicState.cloudStatus = "retrieving"
+    atomicState.phase = "Validating existing device IP addresses before rediscovery"
+    atomicState.cloudStatus = "not tested"
     atomicState.curatedReady = false
     state.sweepQueue = []
+    startValidationProbe()
+}
+
+// Before wiping any saved IP/UID data, send a unicast probe to each row's currently-known IP.
+// Rows that answer within the validation window are left untouched; only rows that fail to
+// respond are cleared and handed to the full broadcast/sweep rediscovery cycle. The probe is
+// sent twice (immediate + a follow-up resend) and given a multi-second window, mirroring the
+// resilience of the existing broadcast phase rather than relying on a single quick packet.
+void startValidationProbe() {
+    Map curated = atomicState.curatedRows ?: [:]
+    List<String> knownIps = curated.values()
+        .collect { (it as Map)?.ip?.toString()?.trim() }
+        .findAll { it }
+        .unique()
+
+    if (!knownIps) {
+        beginFullLanRediscoveryCycle()
+        return
+    }
+
+    atomicState.validationStartedAt = now()
+    atomicState.phase = "Validating ${knownIps.size()} known device IP address(es) before rediscovery"
+    state.validationIps = knownIps
+    knownIps.each { ip -> sendLifx(ip, 2) } // DEVICE.GET_SERVICE unicast probe
+    runInMillis(700, "resendValidationProbe")
+}
+
+@SuppressWarnings("unused")
+void resendValidationProbe() {
+    if ((atomicState.status ?: "") != "validating") return
+    Integer myRunId = (atomicState.discoveryRunId ?: 0) as Integer
+    List<String> ips = (state.validationIps ?: []) as List<String>
+    if (allValidationIpsConfirmed(ips)) {
+        clearUnconfirmedLanDiscoveryFields()
+        beginFullLanRediscoveryCycle()
+        return
+    }
+    ips.each { ip -> sendLifx(ip, 2) } // DEVICE.GET_SERVICE unicast probe, resent in case the first packet was dropped
+    if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
+    runInMillis(2500, "finishValidationProbe")
+}
+
+@SuppressWarnings("unused")
+void finishValidationProbe() {
+    if ((atomicState.status ?: "") != "validating") return
+    clearUnconfirmedLanDiscoveryFields()
+    beginFullLanRediscoveryCycle()
+}
+
+Boolean allValidationIpsConfirmed(List<String> ips) {
+    if (!ips) return true
+    Map curated = atomicState.curatedRows ?: [:]
+    Long validationStartedAt = (atomicState.validationStartedAt ?: 0L) as Long
+    List<String> confirmedIps = curated.values()
+        .collect { it as Map }
+        .findAll { row -> row.ip && row.lanLastSeen && (row.lanLastSeen as Long) >= validationStartedAt }
+        .collect { (it as Map).ip.toString() }
+    return ips.every { confirmedIps.contains(it) }
+}
+
+void beginFullLanRediscoveryCycle() {
+    atomicState.forceFullLanDiscovery = false
+    atomicState.status = "cloud"
+    atomicState.phase = "Network Discovery in progress - this could take up to 2 minutes on a standard /24 network, please wait for it to complete"
+    atomicState.cloudStatus = "retrieving"
     fetchCloudLights(false)
 }
 
-void clearSavedLanDiscoveryFields() {
+void clearLanFieldsForRow(Map row) {
+    row.previousIp = row.ip ?: row.previousIp
+    row.ip = ""
+    row.port = row.port ?: 56700
+    row.lanUid = ""
+    row.lanMac = ""
+    row.mac = ""
+    row.sourceMac = ""
+    row.controlUid = ""
+    row.protocolTargetUid = ""
+    row.target = ""
+    row.lanLastSeen = null
+    row.status = "Awaiting LAN rediscovery"
+}
+
+// Only clears rows whose IP did not answer the validation probe sent from startValidationProbe().
+// A row counts as confirmed when its lanLastSeen timestamp was refreshed at or after the probe
+// was sent, since parseLifx() updates matching curated rows in place as responses arrive.
+void clearUnconfirmedLanDiscoveryFields() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return
+    Long validationStartedAt = (atomicState.validationStartedAt ?: 0L) as Long
     curated.each { k, v ->
         Map row = (v ?: [:]) as Map
-        row.previousIp = row.ip ?: row.previousIp
-        row.ip = ""
-        row.port = row.port ?: 56700
-        row.lanUid = ""
-        row.lanMac = ""
-        row.mac = ""
-        row.sourceMac = ""
-        row.controlUid = ""
-        row.protocolTargetUid = ""
-        row.target = ""
-        row.lanLastSeen = null
-        row.status = "Awaiting LAN rediscovery"
+        Long lanLastSeen = row.lanLastSeen as Long
+        Boolean confirmedDuringValidation = row.ip && lanLastSeen && lanLastSeen >= validationStartedAt
+        if (!confirmedDuringValidation) clearLanFieldsForRow(row)
         curated[k] = row
     }
     atomicState.curatedRows = curated
@@ -321,6 +427,8 @@ void startCloudDiscovery() {
 
 void startLanDiscovery() {
     unschedule()
+    Boolean forceFullScan = atomicState.forceFullLanDiscovery == true
+    atomicState.forceFullLanDiscovery = false
     atomicState.records = [:]
     atomicState.byIp = [:]
     atomicState.stats = emptyStats()
@@ -356,7 +464,7 @@ void startLanDiscovery() {
     stats.missing = Math.max(0, ((stats.expected ?: 0) as Integer) - discoveredCloudLanCount())
     atomicState.stats = stats
 
-    if (allExpectedFound() && atomicState.forceFullLanDiscovery != true) {
+    if (allExpectedFound() && !forceFullScan) {
         atomicState.status = "complete"
         atomicState.phase = "Saved device table already has IP addresses for all rows"
         configureStatusPolling(false)
@@ -509,6 +617,7 @@ void startBroadcastPhase(String stage, String phaseText, Long durationMs) {
 @SuppressWarnings("unused")
 void broadcastPulse() {
     if ((atomicState.status ?: "") != "broadcast") return
+    Integer myRunId = (atomicState.discoveryRunId ?: 0) as Integer
 
     if (allExpectedFound()) {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
@@ -537,6 +646,7 @@ void broadcastPulse() {
         stats.broadcastPulses = ((stats.broadcastPulses ?: 0) as Integer) + 1
     }
     atomicState.stats = stats
+    if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
     runInMillis(500, "broadcastPulse")
 }
 
@@ -603,6 +713,7 @@ void startSweepPhase(String kind, Integer pass, Integer pauseMs, String after) {
     state.sweepQueue = queue
     Map stats = atomicState.stats ?: emptyStats()
     stats.sweepTotal = queue.size()
+    stats.sweepSent = 0
     stats.sweepSkipped = skipped
     stats.retryPass = kind == "retry" ? pass : (kind == "slow" ? 3 : 0)
     atomicState.stats = stats
@@ -613,6 +724,7 @@ void startSweepPhase(String kind, Integer pass, Integer pauseMs, String after) {
 @SuppressWarnings("unused")
 void processSweepBatch() {
     if ((atomicState.status ?: "") != "sweep") return
+    Integer myRunId = (atomicState.discoveryRunId ?: 0) as Integer
 
     if (allExpectedFound()) {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
@@ -646,6 +758,7 @@ void processSweepBatch() {
         pauseExecution(pauseMs)
     }
     state.sweepQueue = queue
+    if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
     runInMillis(20, "processSweepBatch")
 }
 
@@ -670,7 +783,7 @@ void finishLocator(String reason) {
 
 void stopLocator() {
     unschedule()
-    if ((atomicState.status ?: "idle") in ["cloud", "broadcast", "sweep"]) {
+    if ((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) {
         updateMatchStats()
         atomicState.status = "stopped"
         atomicState.phase = "Stopped"
@@ -1097,7 +1210,7 @@ Map childCreationOptions() {
         String currentDriverDisplay = driverDisplayName(currentDriver)
         Boolean ipChanged = rowHasInstalledIpChange(row)
         String installed = child ? (currentDriver && !driverNamesEquivalent(currentDriver, driver) ? "installed as ${currentDriverDisplay}; expected ${driverDisplay}" : "installed") : "not installed"
-        String label = childLabelForRow(row)
+        String label = html(childLabelForRow(row))
         String ip = (row.ip ?: "no IP").toString()
         String note = ipChanged ? " - Update required due to IP address change" : ""
         options[uid] = "${label} - ${ip} - ${driverDisplay} - ${installed}${note}".toString()
@@ -1141,7 +1254,7 @@ String masterSwitchSelectSettingName() {
 
 String masterSwitchListEntryTitle() {
     String status = getChildDevice(fastGroupDni()) ? "installed" : "not installed"
-    String displayName = fastGroupLabel()
+    String displayName = html(fastGroupLabel())
     return "${displayName} - provides overall control of all the above LIFX lights - ${status}".toString()
 }
 
@@ -1210,8 +1323,8 @@ void renderDiscoveredLightRenameInputs() {
         Map row = item as Map
         String uid = normalisedUid(row.id ?: row.uid ?: row.lanUid)
         if (!uid) return
-        String cloudName = (row.label ?: uid).toString()
-        String localName = (row.customLabel ?: row.localLabel ?: "").toString().trim()
+        String cloudName = html((row.label ?: uid).toString())
+        String localName = html((row.customLabel ?: row.localLabel ?: "").toString().trim())
         String current = localName ?: cloudName
         String ip = (row.ip ?: "no IP").toString()
         input discoveredLightRenameSettingName(uid), "text",
@@ -1309,7 +1422,7 @@ void renderChildRenameInputs() {
         String dni = ""
         String currentName = ""
         try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable ignored) { }
-        try { currentName = child.displayName?.toString() ?: child.name?.toString() ?: dni } catch (Throwable ignored) { currentName = dni }
+        try { currentName = html(child.displayName?.toString() ?: child.name?.toString() ?: dni) } catch (Throwable ignored) { currentName = dni }
         input childRenameSettingNameForDni(dni), "text",
             title: "Rename ${currentName}",
             description: "Leave blank to keep current name.",
@@ -1449,6 +1562,42 @@ List<String> controlUidCandidatesForRow(Map row) {
 String childDniForRow(Map row) {
     String uid = lanUidForRow(row)
     return uid ? "lifx-curated-${uid}".toString() : ""
+}
+
+String removeRowButtonName(String uidValue) {
+    String uid = normalisedUid(uidValue)
+    return uid ? "removeRow_${uid}".toString() : "removeRow_invalid"
+}
+
+// Rows with no installed child device are safe to drop from the saved table without
+// affecting anything already created in Hubitat (e.g. a device deleted from LIFX Cloud).
+List<Map> removableSavedRows() {
+    Map curated = atomicState.curatedRows ?: [:]
+    if (!curated) return []
+    return curated.values()
+        .collect { it as Map }
+        .findAll { row -> !getChildDevice(childDniForRow(row)) }
+        .sort { a, b -> compareUid(a.id ?: a.uid, b.id ?: b.uid) }
+}
+
+void removeSavedRowIfNoInstalledChild(String uidValue) {
+    String uid = normalisedUid(uidValue)
+    if (!uid) return
+    Map curated = atomicState.curatedRows ?: [:]
+    Map row = curated[uid] as Map
+    if (!row) return
+
+    if (getChildDevice(childDniForRow(row))) {
+        atomicState.rowRemovalResult = "Cannot remove ${html(childLabelForRow(row))} - an installed child device exists for this row. Remove the device from Hubitat's Devices page first."
+        return
+    }
+
+    curated.remove(uid)
+    atomicState.curatedRows = curated
+    try { app.removeSetting(childSelectSettingName(uid)) } catch (Throwable ignored) { }
+    try { app.removeSetting(discoveredLightRenameSettingName(uid)) } catch (Throwable ignored) { }
+    try { app.removeSetting(removeRowButtonName(uid)) } catch (Throwable ignored) { }
+    atomicState.rowRemovalResult = "Removed ${html(childLabelForRow(row))} (${uid}) from the saved device table."
 }
 
 String driverTypeForRow(Map row) {
@@ -2435,7 +2584,7 @@ String statusHtml() {
     Integer savedRows = curatedRowCount()
     Integer rowsWithIp = curatedWithIpCount()
     Integer rowsMissingIp = Math.max(0, savedRows - rowsWithIp)
-    String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
+    String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
     return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>" +
         "<b>Status:</b> ${html(atomicState.status ?: 'idle')}<br/>" +
         "<b>Cloud status:</b> ${html(atomicState.cloudStatus ?: 'not tested')}<br/>" +
@@ -2455,7 +2604,11 @@ String curatedTableHtml() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return "No saved curated rows yet. Run Cloud discovery, or run LAN discovery to build LAN-only rows."
 
-    List rows = curated.values().collect { it as Map }.sort { a, b -> compareUid(a.id ?: a.uid, b.id ?: b.uid) }
+    List rows = curated.values().collect { it as Map }.sort { a, b ->
+        Integer cmp = compareByIp((a as Map).ip as String, (b as Map).ip as String)
+        if (cmp != 0) return cmp
+        return compareUid((a as Map).id ?: (a as Map).uid, (b as Map).id ?: (b as Map).uid)
+    }
 
     StringBuilder b = new StringBuilder()
     b << tableOpenHtml()
@@ -2495,7 +2648,13 @@ String cloudTableHtml() {
     }
     b << "</tr>"
     Map curated = atomicState.curatedRows ?: [:]
-    cloud.values().sort { a, c -> compareUid(a.id, c.id) }.each { light ->
+    cloud.values().sort { a, c ->
+        Map ca = curated[normaliseCloudId(a.id)] as Map
+        Map cc = curated[normaliseCloudId(c.id)] as Map
+        Integer cmp = compareByIp(ca?.ip as String, cc?.ip as String)
+        if (cmp != 0) return cmp
+        return compareUid(a.id, c.id)
+    }.each { light ->
         Map d = curated[normaliseCloudId(light.id)] as Map ?: [:]
         Map l = light as Map
         b << "<tr>"
@@ -2525,7 +2684,11 @@ String lanTableHtml() {
         b << headerCell(h, idx, h == "Expected from cloud" ? "status" : null)
     }
     b << "</tr>"
-    records.values().sort { a, c -> compareUid(a.mac, c.mac) }.each { dev ->
+    records.values().sort { a, c ->
+        Integer cmp = compareByIp((a as Map).ip as String, (c as Map).ip as String)
+        if (cmp != 0) return cmp
+        return compareUid((a as Map).mac, (c as Map).mac)
+    }.each { dev ->
         b << "<tr>"
         b << cell(dev.mac, 0)
         b << cell(dev.cloudLabel ?: dev.label ?: "", 1)
@@ -2550,6 +2713,31 @@ Integer compareUid(a, b) {
     if (!aa) return 1
     if (!bb) return -1
     return aa <=> bb
+}
+
+// Numeric sort key for a dotted-quad IPv4 address so "10.0.0.9" sorts before "10.0.0.10".
+// Returns null for blank/malformed values so callers can push those rows to the bottom.
+Long ipSortKey(String ip) {
+    if (!ip) return null
+    List<String> parts = ip.tokenize(".")
+    if (parts.size() != 4) return null
+    try {
+        Long key = 0L
+        parts.each { p -> key = (key << 8) | (p.toInteger() & 0xff) }
+        return key
+    } catch (Throwable ignored) {
+        return null
+    }
+}
+
+// Ascending IP order with blank/unparsable IPs sorted after every real address.
+Integer compareByIp(String ipA, String ipB) {
+    Long ka = ipSortKey(ipA)
+    Long kb = ipSortKey(ipB)
+    if (ka == null && kb == null) return 0
+    if (ka == null) return 1
+    if (kb == null) return -1
+    return ka <=> kb
 }
 
 String capabilityFlags(Map light) {
@@ -2840,8 +3028,10 @@ String buildLifxPacket(Integer messageType) {
 }
 
 Integer nextSequence() {
-    Integer seq = ((atomicState.sequence ?: 1) as Integer) & 0xff
-    atomicState.sequence = ((seq + 1) & 0xff)
+    // Not read back anywhere for response correlation, so a lazily-persisted counter
+    // in `state` avoids the synchronous per-packet write cost of `atomicState`.
+    Integer seq = ((state.sequence ?: 1) as Integer) & 0xff
+    state.sequence = ((seq + 1) & 0xff)
     return seq
 }
 

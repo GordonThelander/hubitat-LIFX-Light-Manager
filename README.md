@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.2 Beta
+**Version:** 1.3
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -101,17 +101,17 @@ Update required due to IP address change
 
 Updating the selected child refreshes the stored device data and the visible `Lan Ip` current-state value. The Master Switch membership is recalculated after child updates.
 
-## Current beta version
+## Current version
 
 | Component | Version |
 |---|---|
-| Package | B1.0 beta |
-| App | B1.0 |
-| White Mono driver | B1.0 |
-| Tunable White driver | B1.0 |
-| Colour driver | B1.0 |
-| Plus Colour driver | B1.0 |
-| Master Switch driver | B1.0 |
+| Package | 1.3.0 |
+| App | 1.3 |
+| White Mono driver | 1.3 |
+| Tunable White driver | 1.3 |
+| Colour driver | 1.3 |
+| Plus Colour driver | 1.3 |
+| Master Switch driver | 1.3 |
 
 ## Known limitations
 
