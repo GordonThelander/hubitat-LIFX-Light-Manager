@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.4.3
+ * Version: 1.4.4
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -809,6 +809,8 @@ void processSweepBatch() {
         Map stats = atomicState.stats ?: emptyStats()
         stats.sweepSent = ((stats.sweepSent ?: 0) as Integer) + 1
         atomicState.stats = stats
+        // Blocks this scheduled job (processSweepBatch, self-rescheduled via runInMillis) for up
+        // to batchSize x pauseMs ms per batch cycle across the whole subnet sweep.
         pauseExecution(pauseMs)
     }
     state.sweepQueue = queue
@@ -1879,6 +1881,8 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
             row.childStatus = "Failed: ${safeMessage(t.message)}"
             failed << "${html(label)}: ${html(safeMessage(t.message))}"
         }
+        // Blocks the button-handler request that the user's click is waiting on; total blocking
+        // time scales linearly with the number of devices selected for create/update at once.
         pauseExecution(100)
     }
 
@@ -2174,6 +2178,8 @@ def pollManagedChildSwitchStatus() {
         if ((row.ip ?: '').toString().trim()) {
             sendLifxToRow(row, LIFX_MSG.LIGHT_GET_POWER, [], false, true, "parseChildLifx", 1, 0) // on/off status only
             sent++
+            // Blocks this scheduled cron job (schedule("0 0/N * * * ?")) once per managed light on
+            // every poll tick; total blocking time scales with fleet size.
             pauseExecution(60)
         } else {
             skipped++
@@ -2576,6 +2582,8 @@ void childSetInfraredLevel(device, value) {
 }
 
 void childRefresh(device) {
+    // Both pauseExecution calls below block whatever calling context invoked childRefresh (Rule
+    // Machine, dashboard, Google Home) - up to 160ms total for IR-capable devices.
     Map row = rowForChild(device)
     sendLifxToRow(row, LIFX_MSG.LIGHT_GET, [], false, true, "parseChildLifx", 1, 0)         // response requested
     pauseExecution(80)
@@ -2588,6 +2596,7 @@ void childRefresh(device) {
 
 void refreshChildSoon(device, Integer delayMs = 350) {
     // Hubitat cannot pass a device wrapper reliably through runInMillis, so do a bounded inline refresh delay.
+    // Blocks whatever called this (up to 1200ms) - not just a scheduled job internally.
     try {
         pauseExecution(clampInt(delayMs ?: 350, 100, 1200))
         childRefresh(device)
@@ -2629,6 +2638,8 @@ void sendLifxToRow(Map row, Integer messageType, List<Integer> payload = [], Boo
                     callback: callback
                 ]
             ))
+            // Blocks whatever command handler called sendLifxToRow (button, Rule Machine, Google
+            // Home); up to (targets x repeats) x repeatPauseMs ms total per invocation.
             if ((i < count - 1 || targetIndex < targets.size() - 1) && (repeatPauseMs ?: 0) > 0) pauseExecution(clampInt(repeatPauseMs ?: 50, 20, 200))
         }
     }

@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.4.3
+**Version:** 1.4.4
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -105,13 +105,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.4.3 |
-| App | 1.4.3 |
-| White Mono driver | 1.4.3 |
-| Tunable White driver | 1.4.3 |
-| Colour driver | 1.4.3 |
-| Plus Colour driver | 1.4.3 |
-| Master Switch driver | 1.4.3 |
+| Package | 1.4.4 |
+| App | 1.4.4 |
+| White Mono driver | 1.4.4 |
+| Tunable White driver | 1.4.4 |
+| Colour driver | 1.4.4 |
+| Plus Colour driver | 1.4.4 |
+| Master Switch driver | 1.4.4 |
 
 ## Known limitations
 
@@ -125,5 +125,7 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project was developed after reviewing the original **LIFX Master** Hubitat integration by Robert Alan Heyes. It uses similar LIFX LAN protocol concepts, particularly around local UDP command dispatch, while adding a new cloud-assisted device discovery workflow and Master Switch management model.
 
 ## Status
+
+**1.4.4:** Internal code-quality refactor of the app file - no behaviour change. Introduces named constants for the LIFX port, message-type codes, discovery pacing values and clamp bounds, and removes duplicated packet-building logic between individual child-device commands and Master Switch bulk commands (a shared `buildHsbkPayload`/`buildSetPowerPayload`/`sendPowerOnIfNeeded` are now used by both). This directly targets the class of bug that required two separate fixes in 1.4.2/1.4.3.
 
 **1.4.3:** The LIFX Master Switch now exposes ColorControl and ColorTemperature as real capabilities (plus Light, restoring its light classification in Google Home/Dashboard/Rule Machine), adding Set Hue and Set Saturation support. Non-colour-capable member bulbs remain unaffected by colour commands, since the app only sends hue/saturation data to bulbs that actually support it. Set Color Temperature's parameter order now matches Hubitat's standard signature (temperature, level, transitionTime) so Rule Machine's own UI lines up correctly, while still treating level as an independent setting. Colour/CT/level commands now also send an explicit power-on when the light isn't already known to be on, matching Hue-style rule behaviour instead of requiring a separate On action.
