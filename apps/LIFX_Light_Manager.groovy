@@ -75,6 +75,13 @@ preferences {
 @Field static final Integer PERCENT_MIN = 0
 @Field static final Integer PERCENT_MAX = 100
 
+// Named so discovery can cancel only its own scheduled callbacks (see cancelDiscoveryJobs()),
+// instead of a bare unschedule() that also wipes out unrelated jobs like status polling and the
+// firmware-check resend.
+@Field static final List<String> DISCOVERY_SCHEDULED_JOBS = [
+    "resendValidationProbe", "finishValidationProbe", "broadcastPulse", "processSweepBatch"
+].asImmutable()
+
 // ---------------- Hubitat lifecycle ----------------
 
 def installed() { initialiseState() }
@@ -317,6 +324,15 @@ Boolean isDiscoveryRunStale() {
     return (now() - startedAt) > STALE_RUN_THRESHOLD_MS
 }
 
+// Cancels only discovery's own scheduled callbacks, leaving unrelated jobs (status polling,
+// firmware-check resend) untouched - a bare unschedule() previously wiped out every scheduled
+// job app-wide whenever discovery started or stopped.
+void cancelDiscoveryJobs() {
+    DISCOVERY_SCHEDULED_JOBS.each { jobName ->
+        try { unschedule(jobName) } catch (Throwable t) { log.debug "unschedule(${jobName}) failed: ${t.message}" }
+    }
+}
+
 void toggleAdvanced() {
     atomicState.showAdvanced = !(atomicState.showAdvanced == true)
 }
@@ -331,7 +347,7 @@ void startCombinedDiscovery() {
         log.info "Discovery already running - ignoring duplicate start request"
         return
     }
-    unschedule()
+    cancelDiscoveryJobs()
     String token = configuredLifxCloudToken()
     if (!token) {
         atomicState.status = "idle"
@@ -458,7 +474,7 @@ void clearUnconfirmedLanDiscoveryFields() {
 }
 
 void startCloudDiscovery() {
-    unschedule()
+    cancelDiscoveryJobs()
     atomicState.runLanAfterCloud = false
     atomicState.cloudLights = [:]
     atomicState.expectedIds = [:]
@@ -472,7 +488,7 @@ void startCloudDiscovery() {
 }
 
 void startLanDiscovery() {
-    unschedule()
+    cancelDiscoveryJobs()
     Boolean forceFullScan = atomicState.forceFullLanDiscovery == true
     atomicState.forceFullLanDiscovery = false
     atomicState.records = [:]
@@ -836,7 +852,7 @@ Boolean isIpAlreadyMatchedToCloud(String ip) {
 }
 
 void finishLocator(String reason) {
-    unschedule()
+    cancelDiscoveryJobs()
     state.sweepQueue = []
     updateMatchStats()
     atomicState.status = "complete"
@@ -847,13 +863,17 @@ void finishLocator(String reason) {
 }
 
 void stopLocator() {
-    unschedule()
+    cancelDiscoveryJobs()
     if ((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) {
         updateMatchStats()
         atomicState.status = "stopped"
         atomicState.phase = "Stopped"
         atomicState.curatedReady = true
     }
+    // Previously left status polling disabled until manually reconfigured, since this used to be
+    // a bare unschedule() that also cancelled the polling job - re-arm it here, matching
+    // finishLocator()'s existing behaviour.
+    configureStatusPolling(false)
 }
 
 void clearSourceTables() {
