@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.4.2
+ * Version: 1.4.3
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -2202,6 +2202,14 @@ void groupChildSetColor(device, Map colorMap, duration = 0) {
     } catch (Throwable t) { log.debug "groupChildSetColor() sendEvent failed: ${t.message}" }
 }
 
+void groupChildSetHue(device, value) {
+    groupChildSetColor(device, [hue: value, saturation: device.currentValue('saturation') ?: 100], 0)
+}
+
+void groupChildSetSaturation(device, value) {
+    groupChildSetColor(device, [hue: device.currentValue('hue') ?: 0, saturation: value], 0)
+}
+
 void groupChildSetColorTemperature(device, temperature = 3000, duration = 0) {
     Integer kelvin = clampInt(safeInt(temperature) ?: 3000, 1500, 9000)
     // Same principle as groupChildSetColor(): level is independent, preserved from current state.
@@ -2283,6 +2291,7 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
         }
         List<Integer> payload = [0] + u16le(hue) + u16le(sat) + u16le(brightness) + u16le(kelvin) + u32le(durationMs ?: 0)
         sendFastSetToRow(row, 102, payload)
+        if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
@@ -2293,6 +2302,17 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
             } catch (Throwable t) { log.debug "sendBulkSetLevel() child sendEvent failed: ${t.message}" }
         }
     }
+}
+
+private void sendPowerOnIfNeeded(Map row, child, Integer durationMs = 0) {
+    // LIFX tracks power state separately from colour/brightness, so a colour/CT/level command alone
+    // won't wake a bulb that's physically off - matching Hue-style "set colour implies on" behaviour
+    // requires an explicit power-on packet whenever the light isn't already known to be on.
+    try {
+        if ((child?.currentValue('switch') ?: 'off') != 'on') {
+            sendFastSetToRow(row, 117, u16le(65535) + u32le(durationMs ?: 0))
+        }
+    } catch (Throwable t) { log.debug "sendPowerOnIfNeeded() failed: ${t.message}" }
 }
 
 Boolean rowIsColourCapable(Map row) {
@@ -2312,6 +2332,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
     Integer brightness = scalePercentToLifx(level)
     rows.each { item ->
         Map row = item as Map
+        def child = getChildDevice(childDniForBulkRow(row))
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3500)
         List<Integer> payload
         if (rowIsColourCapable(row)) {
@@ -2321,6 +2342,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
             payload = [0] + u16le(0) + u16le(0) + u16le(brightness) + u16le(safeKelvin) + u32le(durationMs ?: 0)
         }
         sendFastSetToRow(row, 102, payload)
+        if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
@@ -2345,9 +2367,11 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
     Integer brightness = scalePercentToLifx(lvl)
     rows.each { item ->
         Map row = item as Map
+        def child = getChildDevice(childDniForBulkRow(row))
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3000)
         List<Integer> payload = [0] + u16le(0) + u16le(0) + u16le(brightness) + u16le(safeKelvin) + u32le(durationMs ?: 0)
         sendFastSetToRow(row, 102, payload)
+        if (lvl > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
@@ -2433,7 +2457,11 @@ void childSetLevel(device, value, duration = 0) {
     Integer hue = isRgb ? scalePercentToLifx(device.currentValue('hue') ?: 0) : 0
     Integer sat = isRgb ? scalePercentToLifx(device.currentValue('saturation') ?: 0) : 0
     Integer bri = scalePercentToLifx(level)
-    sendSetColor(row, hue, sat, bri, kelvin, durationMs(duration))
+    Integer durMs = durationMs(duration)
+    sendSetColor(row, hue, sat, bri, kelvin, durMs)
+    // LIFX tracks power separately from brightness, so setLevel() alone won't wake a bulb that's
+    // physically off - send an explicit power-on to match standard SwitchLevel/Hue-style behaviour.
+    if (level > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, 65535, durMs)
     try {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
@@ -2445,7 +2473,10 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
     Map row = rowForChild(device)
     Integer kelvin = clampKelvin(row, safeInt(temp) ?: 3500)
     Integer lvl = clampInt(safeInt(level) ?: safeInt(device.currentValue('level')) ?: 100, 0, 100)
-    sendSetColor(row, 0, 0, scalePercentToLifx(lvl), kelvin, durationMs(duration))
+    Integer durMs = durationMs(duration)
+    sendSetColor(row, 0, 0, scalePercentToLifx(lvl), kelvin, durMs)
+    // Colour-temperature commands should wake the bulb, matching Hue-style rule behaviour.
+    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, 65535, durMs)
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "level", value: lvl)
@@ -2463,7 +2494,11 @@ void childSetColor(device, Map colorMap, duration = 0) {
     Integer sat100 = clampInt(safeInt(colorMap?.saturation) ?: 100, 0, 100)
     Integer lvl = clampInt(safeInt(colorMap?.level ?: colorMap?.brightness ?: 100) ?: 100, 0, 100)
     Integer kelvin = clampKelvin(row, safeInt(colorMap?.colorTemperature ?: colorMap?.kelvin) ?: safeInt(device.currentValue('colorTemperature')) ?: 3500)
-    sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durationMs(duration))
+    Integer durMs = durationMs(duration)
+    sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durMs)
+    // Colour commands should wake the bulb, matching Hue-style rule behaviour - LIFX tracks power
+    // separately from colour, so a colour-only packet won't turn on a bulb that's physically off.
+    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, 65535, durMs)
     try {
         device.sendEvent(name: "hue", value: hue100)
         device.sendEvent(name: "saturation", value: sat100)
