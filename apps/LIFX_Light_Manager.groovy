@@ -2375,14 +2375,15 @@ void sendBulkSetPower(Integer power, Integer durationMs = 0) {
     // no response, no callback, no UID-candidate fan-out.
     rows.each { row -> sendFastSetToRow(row as Map, LIFX_MSG.LIGHT_SET_POWER, payload) }
 
+    // A pure power command never invents level state - it only reflects the actual power sent,
+    // matching childOff()'s existing behaviour. Overwriting level to 0 here (and not restoring it
+    // on the next power-on) made a bulb's cached brightness diverge from reality after an off/on
+    // cycle via the Master Switch.
     String sw = (power ?: 0) > 0 ? "on" : "off"
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try { child.sendEvent(name: "switch", value: sw) } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
-            if ((power ?: 0) == 0) {
-                try { child.sendEvent(name: "level", value: 0) } catch (Throwable t) { log.debug "sendEvent(level) failed: ${t.message}" }
-            }
         }
     }
 }
@@ -2399,19 +2400,26 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
-        Integer kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
-        Integer hue = 0
-        Integer sat = 0
-        // Only replay the cached colour if the light is actually showing it right now (colorMode
-        // RGB). If it's in CT/white mode, sending its stale leftover hue/saturation here would drag
-        // it back to that old colour as a side effect of a pure brightness change.
-        if (rowIsColourCapable(row) && (child?.currentValue('colorMode') ?: '').toString() == 'RGB') {
-            hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
-            sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
+        if (level <= 0) {
+            // LIFX tracks power separately from brightness, so dimming to 0 via SET_COLOR alone
+            // leaves the bulb physically powered - a genuine level-0 request needs a real
+            // SET_POWER off, matching what an explicit Off command sends.
+            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
+        } else {
+            Integer kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
+            Integer hue = 0
+            Integer sat = 0
+            // Only replay the cached colour if the light is actually showing it right now (colorMode
+            // RGB). If it's in CT/white mode, sending its stale leftover hue/saturation here would drag
+            // it back to that old colour as a side effect of a pure brightness change.
+            if (rowIsColourCapable(row) && (child?.currentValue('colorMode') ?: '').toString() == 'RGB') {
+                hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
+                sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
+            }
+            List<Integer> payload = buildHsbkPayload(hue, sat, brightness, kelvin, durationMs)
+            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
+            sendPowerOnIfNeeded(row, child, durationMs)
         }
-        List<Integer> payload = buildHsbkPayload(hue, sat, brightness, kelvin, durationMs)
-        sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
-        if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
@@ -2569,6 +2577,18 @@ void childOff(device) {
 void childSetLevel(device, value, duration = 0) {
     Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Map row = rowForChild(device)
+    Integer durMs = durationMs(duration)
+    if (level <= 0) {
+        // LIFX tracks power separately from brightness, so dimming to 0 via SET_COLOR alone
+        // leaves the bulb physically powered - a genuine level-0 request needs a real
+        // SET_POWER off, matching what an explicit Off command sends.
+        sendSetPower(row, LIFX_FULL_OFF, durMs)
+        try {
+            device.sendEvent(name: "level", value: 0)
+            device.sendEvent(name: "switch", value: "off")
+        } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
+        return
+    }
     Integer kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
     // Only replay the cached colour if the light is actually showing it right now (colorMode RGB) -
     // otherwise a stale leftover hue/saturation would drag a CT/white light back to an old colour as
@@ -2577,14 +2597,13 @@ void childSetLevel(device, value, duration = 0) {
     Integer hue = isRgb ? scalePercentToLifx(device.currentValue('hue') ?: 0) : 0
     Integer sat = isRgb ? scalePercentToLifx(device.currentValue('saturation') ?: 0) : 0
     Integer bri = scalePercentToLifx(level)
-    Integer durMs = durationMs(duration)
     sendSetColor(row, hue, sat, bri, kelvin, durMs)
     // LIFX tracks power separately from brightness, so setLevel() alone won't wake a bulb that's
     // physically off - send an explicit power-on to match standard SwitchLevel/Hue-style behaviour.
-    if (level > 0) sendPowerOnIfNeeded(row, device, durMs)
+    sendPowerOnIfNeeded(row, device, durMs)
     try {
         device.sendEvent(name: "level", value: level)
-        device.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
+        device.sendEvent(name: "switch", value: "on")
     } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
