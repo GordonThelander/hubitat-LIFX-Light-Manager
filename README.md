@@ -126,4 +126,4 @@ This project was developed after reviewing the original **LIFX Master** Hubitat 
 
 ## Status
 
-1.3 is intended as a beta release for testing through Hubitat Package Manager.
+**1.4.3:** The LIFX Master Switch now exposes ColorControl and ColorTemperature as real capabilities (plus Light, restoring its light classification in Google Home/Dashboard/Rule Machine), adding Set Hue and Set Saturation support. Non-colour-capable member bulbs remain unaffected by colour commands, since the app only sends hue/saturation data to bulbs that actually support it. Set Color Temperature's parameter order now matches Hubitat's standard signature (temperature, level, transitionTime) so Rule Machine's own UI lines up correctly, while still treating level as an independent setting. Colour/CT/level commands now also send an explicit power-on when the light isn't already known to be on, matching Hue-style rule behaviour instead of requiring a separate On action.
