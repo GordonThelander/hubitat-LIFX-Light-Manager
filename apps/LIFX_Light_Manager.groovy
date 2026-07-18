@@ -2293,12 +2293,12 @@ void groupChildSetLevel(device, value, duration = 0) {
 void groupChildSetColor(device, Map colorMap, duration = 0) {
     Map cmap = colorMap ?: [:]
     Integer hue100 = clampInt(safeInt(cmap.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
-    Integer sat100 = clampInt(safeInt(cmap.saturation) ?: 100, PERCENT_MIN, PERCENT_MAX)
+    Integer sat100 = clampInt(intOrDefault(cmap.saturation, 100), PERCENT_MIN, PERCENT_MAX)
     // Level is an independent setting controlled via setLevel() - colour commands preserve the
     // Master Switch's current level rather than accepting their own, since a colour-map input's
     // level field is easy to submit stale/unedited and shouldn't be able to silently change
     // brightness as a side effect of a colour change.
-    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, PERCENT_MIN, PERCENT_MAX)
+    Integer lvl = clampInt(intOrDefault(device.currentValue('level'), 75), PERCENT_MIN, PERCENT_MAX)
     Integer requestedKelvin = safeInt(cmap.colorTemperature ?: cmap.kelvin) ?: 3500
     Integer dur = durationMs(cmap.duration ?: duration ?: 0)
     sendBulkSetColorOrLevel(hue100, sat100, lvl, requestedKelvin, dur)
@@ -2322,7 +2322,7 @@ void groupChildSetSaturation(device, value) {
 void groupChildSetColorTemperature(device, temperature = 3000, duration = 0) {
     Integer kelvin = clampInt(safeInt(temperature) ?: 3000, 1500, 9000)
     // Same principle as groupChildSetColor(): level is independent, preserved from current state.
-    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, PERCENT_MIN, PERCENT_MAX)
+    Integer lvl = clampInt(intOrDefault(device.currentValue('level'), 75), PERCENT_MIN, PERCENT_MAX)
     sendBulkSetColorTemperature(kelvin, lvl, durationMs(duration))
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
@@ -2592,7 +2592,7 @@ void childSetLevel(device, value, duration = 0) {
 void childSetColorTemperature(device, temp, level = null, duration = 0) {
     Map row = rowForChild(device)
     Integer kelvin = clampKelvin(row, safeInt(temp) ?: 3500)
-    Integer lvl = clampInt(safeInt(level) ?: safeInt(device.currentValue('level')) ?: 100, PERCENT_MIN, PERCENT_MAX)
+    Integer lvl = clampInt(firstNonNullInt([level, device.currentValue('level')], 100), PERCENT_MIN, PERCENT_MAX)
     Integer durMs = durationMs(duration)
     sendSetColor(row, 0, 0, scalePercentToLifx(lvl), kelvin, durMs)
     // Colour-temperature commands should wake the bulb, matching Hue-style rule behaviour.
@@ -2611,8 +2611,8 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
 void childSetColor(device, Map colorMap, duration = 0) {
     Map row = rowForChild(device)
     Integer hue100 = clampInt(safeInt(colorMap?.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
-    Integer sat100 = clampInt(safeInt(colorMap?.saturation) ?: 100, PERCENT_MIN, PERCENT_MAX)
-    Integer lvl = clampInt(safeInt(colorMap?.level ?: colorMap?.brightness ?: 100) ?: 100, PERCENT_MIN, PERCENT_MAX)
+    Integer sat100 = clampInt(intOrDefault(colorMap?.saturation, 100), PERCENT_MIN, PERCENT_MAX)
+    Integer lvl = clampInt(firstNonNullInt([colorMap?.level, colorMap?.brightness], 100), PERCENT_MIN, PERCENT_MAX)
     Integer kelvin = clampKelvin(row, safeInt(colorMap?.colorTemperature ?: colorMap?.kelvin) ?: safeInt(device.currentValue('colorTemperature')) ?: 3500)
     Integer durMs = durationMs(duration)
     sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durMs)
@@ -3210,6 +3210,22 @@ String driverModeForProduct(value) {
 
 Integer safeInt(value) {
     try { return value == null ? null : (value as Integer) } catch (Throwable t) { log.debug "safeInt() failed: ${t.message}"; return null }
+}
+
+// Groovy's ?: treats 0 as falsy, so `safeInt(x) ?: N` silently replaces an explicit 0 with N
+// whenever N != 0. These null-aware variants only fall back when the value is genuinely absent
+// or unparseable, so a real 0 (e.g. saturation 0, level 0) is preserved.
+Integer intOrDefault(value, Integer fallback) {
+    Integer parsed = safeInt(value)
+    return parsed == null ? fallback : parsed
+}
+
+Integer firstNonNullInt(List values, Integer fallback) {
+    for (v in values) {
+        Integer parsed = safeInt(v)
+        if (parsed != null) return parsed
+    }
+    return fallback
 }
 
 // ---------------- Packet construction ----------------
