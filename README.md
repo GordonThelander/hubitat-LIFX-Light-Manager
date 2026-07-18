@@ -92,6 +92,8 @@ It supports:
 
 Colour-capable lights receive colour commands. Non-colour lights receive level-only changes where appropriate.
 
+The Master Switch exposes `Light`, `ColorControl` and `ColorTemperature` capabilities, so sharing it with Google Home makes it appear there as a full colour light, the same as the individual colour-capable bulb drivers. Confirmed working with Google Home.
+
 ## IP address change remediation
 
 When discovery finds a different IP address for an already-created child device, the app marks that device for update with:
