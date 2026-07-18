@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.4
+**Version:** 1.4.1
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -63,7 +63,7 @@ README.md
 2. Add the **LIFX Light Manager** app in Hubitat.
 3. Enter your own LIFX Personal Access Token.
 4. Press **Discovery**.
-5. Wait for network discovery to complete. On a standard `/24` network this can take up to 2 minutes.
+5. Wait for network discovery to complete. This typically takes 2-3 minutes, and can take longer the first time or after using Clear all Data - the app paces its LAN traffic conservatively to stay within Hubitat's own outbound command rate limits.
 6. Select the child devices to create or update.
 7. Use **Create / update selected child devices** or **Create / update all listed child devices**.
 
@@ -105,13 +105,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.4.0 |
-| App | 1.4 |
-| White Mono driver | 1.4 |
-| Tunable White driver | 1.4 |
-| Colour driver | 1.4 |
-| Plus Colour driver | 1.4 |
-| Master Switch driver | 1.4 |
+| Package | 1.4.1 |
+| App | 1.4.1 |
+| White Mono driver | 1.4.1 |
+| Tunable White driver | 1.4.1 |
+| Colour driver | 1.4.1 |
+| Plus Colour driver | 1.4.1 |
+| Master Switch driver | 1.4.1 |
 
 ## Known limitations
 

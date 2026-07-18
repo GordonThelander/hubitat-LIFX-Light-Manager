@@ -1,8 +1,8 @@
 /*
  * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: 1.4
- * Parent app: LIFX Light Manager 1.4+
+ * Version: 1.4.1
+ * Parent app: LIFX Light Manager 1.4.1+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.

@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.4
+ * Version: 1.4.1
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -41,6 +41,10 @@ preferences {
 def installed() { initialiseState() }
 def updated() {
     initialiseState()
+    // Advanced starts hidden on every visit, not just first install - updated() runs before
+    // appButtonHandler() for the same click, so if this click was the Advanced button itself,
+    // toggleAdvanced() still correctly shows it for this render; any other click leaves it hidden.
+    atomicState.showAdvanced = false
     handleDiscoveryButtonFallback()
     configureStatusPolling(false)
 }
@@ -102,7 +106,7 @@ void renderMainPageContent(Boolean advanced) {
         if ((atomicState.status ?: "idle") == "validating") {
             paragraph "<div style='font-weight:bold;color:#0066cc'>Validating existing devices...</div>"
         } else if (isDiscoveryRunning()) {
-            paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this could take up to 2 minutes on a standard /24 network</div>"
+            paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear all Data</div>"
         } else if ((atomicState.status ?: "idle") == "complete") {
             paragraph "<div style='font-weight:bold;color:#008000'>Discovery Complete</div>"
         }
@@ -151,21 +155,6 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "No creation-ready devices yet. Run Discovery first."
         }
 
-        paragraph "<b>Optional child status polling</b><br/>Polls installed LIFX child devices over LAN for on/off state only. This is intentionally lightweight and does not run firmware discovery or full device refresh."
-        input "lifxStatusPollingEnabled", "bool",
-            title: "Enable timed on/off status polling",
-            defaultValue: false,
-            required: false,
-            submitOnChange: true
-        input "lifxStatusPollIntervalMinutes", "enum",
-            title: "Status polling interval",
-            options: ["1":"1 minute", "2":"2 minutes", "5":"5 minutes", "10":"10 minutes", "15":"15 minutes", "30":"30 minutes"],
-            defaultValue: "2",
-            required: false,
-            submitOnChange: true
-        input "applyStatusPollingBtn", "button", title: "Apply polling settings", submitOnChange: true
-        input "pollStatusNowBtn", "button", title: "Poll status now", submitOnChange: true
-
         input "clearAllBtn", "button", title: "Clear all Data", submitOnChange: true
         input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced", submitOnChange: true
     }
@@ -188,13 +177,7 @@ void renderMainPageContent(Boolean advanced) {
         }
     }
 
-    if (atomicState.statusPollingResult) {
-        section("Child status polling") {
-            paragraph atomicState.statusPollingResult
-        }
-    }
-
-    section("Device preparation table") {
+    section("<b>Device preparation table</b>") {
         paragraph curatedTableHtml()
     }
 
@@ -202,7 +185,24 @@ void renderMainPageContent(Boolean advanced) {
         section("Advanced status") {
             paragraph statusHtml()
         }
-        section("Remove stale saved rows") {
+        section("<b>Optional child status polling</b>") {
+            paragraph "Polls installed LIFX child devices over LAN for on/off state only. This is intentionally lightweight and does not run firmware discovery or full device refresh."
+            input "lifxStatusPollingEnabled", "bool",
+                title: "Enable timed on/off status polling",
+                defaultValue: false,
+                required: false,
+                submitOnChange: true
+            input "lifxStatusPollIntervalMinutes", "enum",
+                title: "Status polling interval",
+                options: ["1":"1 minute", "2":"2 minutes", "5":"5 minutes", "10":"10 minutes", "15":"15 minutes", "30":"30 minutes"],
+                defaultValue: "2",
+                required: false,
+                submitOnChange: true
+            input "applyStatusPollingBtn", "button", title: "Apply polling settings", submitOnChange: true
+            input "pollStatusNowBtn", "button", title: "Poll status now", submitOnChange: true
+            if (atomicState.statusPollingResult) paragraph atomicState.statusPollingResult
+        }
+        section("<b>Remove stale saved rows</b>") {
             paragraph "Rows below have no installed Hubitat child device and can be safely removed from the saved device table - for example, a device deleted from LIFX Cloud. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
             List<Map> removable = removableSavedRows()
             if (!removable) {
@@ -218,10 +218,10 @@ void renderMainPageContent(Boolean advanced) {
             }
             if (atomicState.rowRemovalResult) paragraph atomicState.rowRemovalResult
         }
-        section("LIFX Cloud source table") {
+        section("<b>LIFX Cloud source table</b>") {
             paragraph cloudTableHtml()
         }
-        section("LAN responses") {
+        section("<b>LAN responses</b>") {
             paragraph lanTableHtml()
         }
     }
@@ -374,7 +374,7 @@ Boolean allValidationIpsConfirmed(List<String> ips) {
 void beginFullLanRediscoveryCycle() {
     atomicState.forceFullLanDiscovery = false
     atomicState.status = "cloud"
-    atomicState.phase = "Network Discovery in progress - this could take up to 2 minutes on a standard /24 network, please wait for it to complete"
+    atomicState.phase = "Network Discovery in progress - this typically takes 2-3 minutes, and can take longer the first time or after Clear all Data, please wait for it to complete"
     atomicState.cloudStatus = "retrieving"
     fetchCloudLights(false)
 }
@@ -594,8 +594,11 @@ void fetchCloudLights(Boolean cloudOnly) {
     }
 }
 
+// Broadcast reaches every device on the subnet for a handful of packets, versus the sweep's
+// one-packet-per-candidate-address cost, so it's worth giving it a much longer, more patient
+// run before falling back to the expensive full sweep - see broadcastPulse() for pacing.
 void startInitialBroadcast() {
-    startBroadcastPhase("initial", "Initial 5 second broadcast pulse", 5000L)
+    startBroadcastPhase("initial", "Initial broadcast discovery (up to 45 seconds)", 45000L)
 }
 
 void startSecondBroadcast() {
@@ -603,7 +606,7 @@ void startSecondBroadcast() {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
-    startBroadcastPhase("second", "Second 5 second broadcast pulse after sweep", 5000L)
+    startBroadcastPhase("second", "Second broadcast discovery pass after sweep (up to 45 seconds)", 45000L)
 }
 
 void startBroadcastPhase(String stage, String phaseText, Long durationMs) {
@@ -627,7 +630,7 @@ void broadcastPulse() {
     String stage = atomicState.broadcastStage ?: "initial"
     if (now() >= ((atomicState.broadcastUntil ?: 0L) as Long)) {
         if (stage == "initial") {
-            startSweepPhase("fast", 1, 50, "secondBroadcast")
+            startSweepPhase("fast", 1, 150, "secondBroadcast")
         } else {
             startRetrySweep(1)
         }
@@ -647,7 +650,10 @@ void broadcastPulse() {
     }
     atomicState.stats = stats
     if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
-    runInMillis(500, "broadcastPulse")
+    // Broadcast pulses go through the same rate-limited hub command queue as the sweep, so this
+    // is paced conservatively too (4 packets/pulse) rather than the original 500ms/8-packets-
+    // per-second rate that contributed to the "pending hub commands" backlog.
+    runInMillis(3000, "broadcastPulse")
 }
 
 void startRetrySweep(Integer pass) {
@@ -655,7 +661,7 @@ void startRetrySweep(Integer pass) {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
-    startSweepPhase("retry", pass, 50, pass < 2 ? "retryNext" : "slowSweep")
+    startSweepPhase("retry", pass, 150, pass < 2 ? "retryNext" : "slowSweep")
 }
 
 void startSlowSweep() {
@@ -663,7 +669,7 @@ void startSlowSweep() {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
-    startSweepPhase("slow", 1, 100, "finish")
+    startSweepPhase("slow", 1, 250, "finish")
 }
 
 void startSweepPhase(String kind, Integer pass, Integer pauseMs, String after) {
@@ -741,13 +747,24 @@ void processSweepBatch() {
         } else if (after == "slowSweep") {
             startSlowSweep()
         } else {
+            Map curatedSnapshot = atomicState.curatedRows ?: [:]
+            List<String> snapshotDump = curatedSnapshot.values()
+                .collect { it as Map }
+                .collect { r -> "${r.id ?: r.uid}:${r.label ?: '?'}:connected=${r.connected}:ip=${(r.ip ?: '').toString() ?: 'NONE'}".toString() }
+            log.debug "finishLocator triggered from processSweepBatch() queue-exhausted path. expected=${expectedCloudLanDiscoveryCount()}, found=${discoveredCloudLanCount()}. Full snapshot: ${snapshotDump}"
             finishLocator("Resilient IP location cycle complete")
         }
         return
     }
 
     Integer pauseMs = ((atomicState.sweepPauseMs ?: 50) as Integer)
-    Integer batchSize = Math.min(10, queue.size())
+    // Batch size and inter-batch delay were previously 10 / 20ms - aggressive enough that
+    // Hubitat's own "pending hub commands" backpressure warning reached 80+ queued sends during
+    // a sweep (escalating to platform-level "consider disabling app/device" errors), meaning
+    // outbound LAN packets were being queued far faster than the hub could actually dispatch
+    // them (seen directly in hub logs). Sending fewer packets per batch and giving more time
+    // between batches lets the hub's outbound queue drain in between.
+    Integer batchSize = Math.min(2, queue.size())
     for (int i = 0; i < batchSize; i++) {
         if (allExpectedFound()) break
         String ip = queue.remove(0).toString()
@@ -759,7 +776,7 @@ void processSweepBatch() {
     }
     state.sweepQueue = queue
     if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
-    runInMillis(20, "processSweepBatch")
+    runInMillis(300, "processSweepBatch")
 }
 
 Boolean isIpAlreadyMatchedToCloud(String ip) {
@@ -824,6 +841,11 @@ void clearAllData() {
     atomicState.curatedReady = true
     atomicState.runLanAfterCloud = false
     atomicState.childCreateResult = ""
+    atomicState.discoveredRenameResult = ""
+    atomicState.childRenameResult = ""
+    atomicState.statusPollingResult = ""
+    atomicState.rowRemovalResult = ""
+    atomicState.recentRowRemovals = [:]
     try { app.removeSetting("selectedChildUids") } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
     state.sweepQueue = []
 }
@@ -1036,9 +1058,13 @@ def parseLifx(response) {
             if (c) {
                 c.lanProduct = dev.product ?: c.lanProduct
                 c.status = c.status ?: "LAN found - ${cloudMatch?.matchType ?: ''}"
+            } else {
+                // Only chase group/location/label over LAN when there's no cloud match to supply
+                // them already - this chain used to fire unconditionally for every responding
+                // device, adding 3 unthrottled extra round-trips each and badly backing up the
+                // hub's outbound command queue during a normal cloud-led discovery run.
+                sendLifx(ip, 51) // DEVICE.GET_GROUP
             }
-            // Restore original discovery chain for LAN-only fallback naming.
-            sendLifx(ip, 51) // DEVICE.GET_GROUP
             stats.version = ((stats.version ?: 0) as Integer) + 1
             break
         case 53:
@@ -1086,6 +1112,11 @@ def parseLifx(response) {
     atomicState.stats = stats
 
     if ((atomicState.status ?: "") in ["broadcast", "sweep"] && allExpectedFound()) {
+        Map curatedSnapshot = atomicState.curatedRows ?: [:]
+        List<String> snapshotDump = curatedSnapshot.values()
+            .collect { it as Map }
+            .collect { r -> "${r.id ?: r.uid}:${r.label ?: '?'}:connected=${r.connected}:ip=${(r.ip ?: '').toString() ?: 'NONE'}".toString() }
+        log.debug "finishLocator triggered from parseLifx() by response from mac=${mac} ip=${ip}. expected=${expectedCloudLanDiscoveryCount()}, found=${discoveredCloudLanCount()}, savedRowCount=${curatedSnapshot.size()}. Full snapshot: ${snapshotDump}"
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
     } else {
         updateMatchStats()
@@ -1517,6 +1548,18 @@ String childLabelForRow(Map row) {
     return prefix ? "${prefix} ${base}".toString() : base
 }
 
+// row.childLabel is only a cached snapshot written when child devices are created/updated - it
+// goes stale (blank) after Clear all Data rebuilds the row fresh, even though the actual
+// installed child device is untouched and still has its real name. Read the live device's
+// current label when one is installed, rather than trusting that cached field.
+String localNameForRow(Map row) {
+    def child = getChildDevice(childDniForRow(row))
+    if (child) {
+        try { return (child.getLabel() ?: child.displayName ?: "").toString() } catch (Throwable ignored) { return "" }
+    }
+    return (row?.customLabel ?: row?.localLabel ?: "").toString().trim()
+}
+
 String cloudUidForRow(Map row) {
     return normalisedUid(row?.id ?: row?.uid ?: row?.cloudUid)
 }
@@ -1575,10 +1618,26 @@ String removeRowButtonName(String uidValue) {
 List<Map> removableSavedRows() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return []
+    Map recentRemovals = recentRowRemovals()
     return curated.values()
         .collect { it as Map }
-        .findAll { row -> !getChildDevice(childDniForRow(row)) }
+        .findAll { row ->
+            String uid = normalisedUid(row.id ?: row.uid)
+            !recentRemovals.containsKey(uid) && !getChildDevice(childDniForRow(row))
+        }
         .sort { a, b -> compareUid(a.id ?: a.uid, b.id ?: b.uid) }
+}
+
+// Rows removed within this window are hidden from removableSavedRows() even if something
+// causes a stale re-read of curatedRows right after the click that processed the removal
+// (observed in testing: the confirmation message showed correctly, but the button list still
+// showed the just-removed row on that same render). This closes the gap regardless of the
+// exact platform-level cause. Removals older than the window naturally age out, so a device
+// that's legitimately rediscovered later isn't permanently hidden.
+Map recentRowRemovals() {
+    Map recent = (atomicState.recentRowRemovals ?: [:]) as Map
+    Long cutoff = now() - 30000L
+    return recent.findAll { k, ts -> ((ts ?: 0L) as Long) >= cutoff }
 }
 
 void removeSavedRowIfNoInstalledChild(String uidValue) {
@@ -1598,6 +1657,11 @@ void removeSavedRowIfNoInstalledChild(String uidValue) {
     try { app.removeSetting(childSelectSettingName(uid)) } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
     try { app.removeSetting(discoveredLightRenameSettingName(uid)) } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
     try { app.removeSetting(removeRowButtonName(uid)) } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
+
+    Map recentRemovals = recentRowRemovals()
+    recentRemovals[uid] = now()
+    atomicState.recentRowRemovals = recentRemovals
+
     atomicState.rowRemovalResult = "Removed ${html(childLabelForRow(row))} (${uid}) from the saved device table."
 }
 
@@ -2622,7 +2686,7 @@ String curatedTableHtml() {
         b << "<tr>"
         b << cell(r.id ?: r.uid, 0)
         b << cell(r.label, 1)
-        b << cell((r.childLabel ?: r.customLabel ?: r.localLabel ?: ""), 1)
+        b << cell(localNameForRow(r), 1)
         b << cell(r.ip, 2)
         b << cell(curatedLastSeen(r), 3)
         b << cell(r.groupName, 4)
@@ -2915,14 +2979,15 @@ String formatDateTime(value) {
 
 Long epochMillis(value) {
     if (!value) return 0L
-    try {
-        if (value instanceof Number) return (value as Long)
-    } catch (Throwable t) { log.debug "epochMillis() numeric conversion failed: ${t.message}" }
+    // Trying several representations/formats in turn is expected, normal control flow here
+    // (LIFX Cloud timestamps and locally-recorded millis are both passed through this same
+    // helper) - only the final, total failure is worth a log line, not each interim attempt.
+    if (value instanceof Number) return (value as Long)
 
     String s = value.toString()?.trim()
     if (!s) return 0L
 
-    try { return (s as Long) } catch (Throwable t) { log.debug "epochMillis() long parse failed: ${t.message}" }
+    try { return (s as Long) } catch (Throwable ignored) { }
 
     List patterns = [
         "yyyy-MM-dd'T'HH:mm:ss.SSSX",
@@ -2937,9 +3002,10 @@ Long epochMillis(value) {
             def parser = new java.text.SimpleDateFormat(pattern)
             parser.setTimeZone(java.util.TimeZone.getTimeZone("UTC"))
             return parser.parse(s).time
-        } catch (Throwable t) { log.debug "epochMillis() pattern '${pattern}' failed: ${t.message}" }
+        } catch (Throwable ignored) { }
     }
 
+    log.debug "epochMillis() could not parse '${s}' with any known format"
     return 0L
 }
 
