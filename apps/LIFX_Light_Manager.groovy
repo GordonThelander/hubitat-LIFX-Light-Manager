@@ -68,7 +68,10 @@ preferences {
 @Field static final Integer SWEEP_PAUSE_SLOW_MS = 250
 @Field static final Integer SWEEP_BATCH_SIZE = 2
 @Field static final Long BROADCAST_DURATION_MS = 45000L
-@Field static final Long STALE_RUN_THRESHOLD_MS = 180000L
+// A legitimate full run (validation + both broadcasts + fast/retry x2/slow sweeps at current
+// pacing) can take up to ~423s worst case, so this stays comfortably above that rather than
+// risking a second Discovery click superseding a run that's still legitimately working.
+@Field static final Long STALE_RUN_THRESHOLD_MS = 600000L
 @Field static final Long RECENT_REMOVAL_WINDOW_MS = 30000L
 @Field static final Integer FIRMWARE_RESEND_DELAY_MS = 2500
 
