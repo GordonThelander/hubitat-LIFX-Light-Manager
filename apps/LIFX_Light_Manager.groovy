@@ -1280,10 +1280,10 @@ Map childCreationOptions() {
         String currentDriver = installedDriverName(child)
         String currentDriverDisplay = driverDisplayName(currentDriver)
         Boolean ipChanged = rowHasInstalledIpChange(row)
-        String installed = child ? (currentDriver && !driverNamesEquivalent(currentDriver, driver) ? "installed as ${currentDriverDisplay}; expected ${driverDisplay}" : "installed") : "not installed"
+        String installed = child ? (currentDriver && !driverNamesEquivalent(currentDriver, driver) ? "installed as ${currentDriverDisplay}; expected ${driverDisplay}" : "installed") : "<span style='color:#cc6600;font-weight:bold'>not installed</span>"
         String label = html(childLabelForRow(row))
         String ip = (row.ip ?: "no IP").toString()
-        String note = ipChanged ? " - Update required due to IP address change" : ""
+        String note = ipChanged ? " - <span style='color:#cc0000;font-weight:bold'>Update required due to IP address change</span>" : ""
         options[uid] = "${label} - ${ip} - ${driverDisplay} - ${installed}${note}".toString()
     }
     return options
