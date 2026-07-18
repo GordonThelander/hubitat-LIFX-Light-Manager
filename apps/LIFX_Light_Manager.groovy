@@ -2339,9 +2339,11 @@ void groupChildRefresh(device) {
         def child = getChildDevice(childDniForBulkRow(row as Map))
         try { if (child?.currentValue('switch') == 'on') onCount++ } catch (Throwable t) { log.debug "child.currentValue(switch) failed: ${t.message}" }
     }
+    // Level is not touched here - the Master Switch is a virtual aggregate with no physical
+    // brightness of its own to refresh from the network, so a refresh should preserve whatever
+    // level was last actually commanded rather than inventing a binary 100/0 from on/off count.
     try {
         device.sendEvent(name: "switch", value: onCount > 0 ? "on" : "off")
-        device.sendEvent(name: "level", value: onCount > 0 ? 100 : 0)
         device.sendEvent(name: "memberCount", value: total)
         device.sendEvent(name: "onMemberCount", value: onCount)
     } catch (Throwable t) { log.debug "groupChildRefresh() sendEvent failed: ${t.message}" }
@@ -2750,12 +2752,20 @@ def parseChildLifx(response) {
             return // LIFX acknowledgement for SET workflows
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE) {
             Map light = parseLightState(parsed.payloadHex)
+            Integer saturation = scaleDown100(light.saturation ?: 0)
             if (light.label) child.sendEvent(name: "label", value: light.label)
             child.sendEvent(name: "switch", value: ((light.power ?: 0) as Integer) > 0 ? "on" : "off")
             child.sendEvent(name: "level", value: scaleDown100(light.brightness ?: 0))
             child.sendEvent(name: "hue", value: scaleDown100(light.hue ?: 0))
-            child.sendEvent(name: "saturation", value: scaleDown100(light.saturation ?: 0))
+            child.sendEvent(name: "saturation", value: saturation)
             child.sendEvent(name: "colorTemperature", value: light.kelvin ?: 3500)
+            // A LightState response is the only place colorMode can be reconciled with the bulb's
+            // actual reported saturation - without this, a light recoloured outside Hubitat (e.g.
+            // from the LIFX app) kept a stale colorMode, and the next brightness-only command would
+            // then desaturate it back to white.
+            if (rowIsColourCapable(row)) {
+                child.sendEvent(name: "colorMode", value: saturation > 0 ? "RGB" : "CT")
+            }
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_POWER) {
             Integer power = leU16(parsed.payloadHex, 0)
             child.sendEvent(name: "switch", value: power > 0 ? "on" : "off")
