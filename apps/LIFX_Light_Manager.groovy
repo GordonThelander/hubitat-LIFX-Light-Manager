@@ -19,6 +19,8 @@
  *
  */
 
+import groovy.transform.Field
+
 definition(
     name: "LIFX Light Manager",
     namespace: "Hubitat Integrations",
@@ -35,6 +37,41 @@ definition(
 preferences {
     page(name: "mainPage", title: "LIFX Light Manager", install: true, uninstall: true)
 }
+
+// ---------------- Constants ----------------
+// Not yet referenced anywhere - added as its own isolated step so a hub-side compile
+// problem with @Field (unused elsewhere in this file until now) can be caught before
+// anything depends on it.
+
+@Field static final Integer LIFX_PORT = 56700
+
+@Field static final Map LIFX_MSG = [
+    GET_SERVICE: 2, STATE_SERVICE: 3, GET_VERSION: 32, STATE_VERSION: 33,
+    GET_GROUP: 51, STATE_GROUP: 53, GET_LOCATION: 48, STATE_LOCATION: 50,
+    GET_LABEL: 23, STATE_LABEL: 25, ACK: 45,
+    LIGHT_GET: 101, LIGHT_SET_COLOR: 102, LIGHT_STATE: 107,
+    LIGHT_GET_POWER: 116, LIGHT_SET_POWER: 117, LIGHT_STATE_POWER: 118,
+    LIGHT_GET_INFRARED: 120, LIGHT_STATE_INFRARED: 121, LIGHT_SET_INFRARED: 122
+].asImmutable()
+
+@Field static final Integer LIFX_FULL_ON = 65535
+@Field static final Integer LIFX_FULL_OFF = 0
+
+@Field static final Integer VALIDATION_RESEND_DELAY_MS = 700
+@Field static final Integer VALIDATION_FINISH_DELAY_MS = 2500
+@Field static final Integer BROADCAST_PULSE_START_DELAY_MS = 50
+@Field static final Integer BROADCAST_PULSE_INTERVAL_MS = 3000
+@Field static final Integer SWEEP_BATCH_START_DELAY_MS = 20
+@Field static final Integer SWEEP_BATCH_INTERVAL_MS = 300
+@Field static final Integer SWEEP_PAUSE_FAST_MS = 150
+@Field static final Integer SWEEP_PAUSE_SLOW_MS = 250
+@Field static final Integer SWEEP_BATCH_SIZE = 2
+@Field static final Long BROADCAST_DURATION_MS = 45000L
+@Field static final Long STALE_RUN_THRESHOLD_MS = 180000L
+@Field static final Long RECENT_REMOVAL_WINDOW_MS = 30000L
+
+@Field static final Integer PERCENT_MIN = 0
+@Field static final Integer PERCENT_MAX = 100
 
 // ---------------- Hubitat lifecycle ----------------
 
