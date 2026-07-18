@@ -305,7 +305,7 @@ Boolean isDiscoveryRunning() {
 Boolean isDiscoveryRunStale() {
     Long startedAt = (atomicState.discoveryRunStartedAt ?: 0L) as Long
     if (!startedAt) return true
-    return (now() - startedAt) > 180000L
+    return (now() - startedAt) > STALE_RUN_THRESHOLD_MS
 }
 
 void toggleAdvanced() {
@@ -371,8 +371,8 @@ void startValidationProbe() {
     atomicState.validationStartedAt = now()
     atomicState.phase = "Validating ${knownIps.size()} known device IP address(es) before rediscovery"
     state.validationIps = knownIps
-    knownIps.each { ip -> sendLifx(ip, 2) } // DEVICE.GET_SERVICE unicast probe
-    runInMillis(700, "resendValidationProbe")
+    knownIps.each { ip -> sendLifx(ip, LIFX_MSG.GET_SERVICE) } // unicast probe
+    runInMillis(VALIDATION_RESEND_DELAY_MS, "resendValidationProbe")
 }
 
 @SuppressWarnings("unused")
@@ -385,9 +385,9 @@ void resendValidationProbe() {
         beginFullLanRediscoveryCycle()
         return
     }
-    ips.each { ip -> sendLifx(ip, 2) } // DEVICE.GET_SERVICE unicast probe, resent in case the first packet was dropped
+    ips.each { ip -> sendLifx(ip, LIFX_MSG.GET_SERVICE) } // unicast probe, resent in case the first packet was dropped
     if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
-    runInMillis(2500, "finishValidationProbe")
+    runInMillis(VALIDATION_FINISH_DELAY_MS, "finishValidationProbe")
 }
 
 @SuppressWarnings("unused")
@@ -419,7 +419,7 @@ void beginFullLanRediscoveryCycle() {
 void clearLanFieldsForRow(Map row) {
     row.previousIp = row.ip ?: row.previousIp
     row.ip = ""
-    row.port = row.port ?: 56700
+    row.port = row.port ?: LIFX_PORT
     row.lanUid = ""
     row.lanMac = ""
     row.mac = ""
@@ -635,7 +635,7 @@ void fetchCloudLights(Boolean cloudOnly) {
 // one-packet-per-candidate-address cost, so it's worth giving it a much longer, more patient
 // run before falling back to the expensive full sweep - see broadcastPulse() for pacing.
 void startInitialBroadcast() {
-    startBroadcastPhase("initial", "Initial broadcast discovery (up to 45 seconds)", 45000L)
+    startBroadcastPhase("initial", "Initial broadcast discovery (up to 45 seconds)", BROADCAST_DURATION_MS)
 }
 
 void startSecondBroadcast() {
@@ -643,7 +643,7 @@ void startSecondBroadcast() {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
-    startBroadcastPhase("second", "Second broadcast discovery pass after sweep (up to 45 seconds)", 45000L)
+    startBroadcastPhase("second", "Second broadcast discovery pass after sweep (up to 45 seconds)", BROADCAST_DURATION_MS)
 }
 
 void startBroadcastPhase(String stage, String phaseText, Long durationMs) {
@@ -651,7 +651,7 @@ void startBroadcastPhase(String stage, String phaseText, Long durationMs) {
     atomicState.broadcastStage = stage
     atomicState.phase = phaseText
     atomicState.broadcastUntil = now() + durationMs
-    runInMillis(50, "broadcastPulse")
+    runInMillis(BROADCAST_PULSE_START_DELAY_MS, "broadcastPulse")
 }
 
 @SuppressWarnings("unused")
@@ -667,7 +667,7 @@ void broadcastPulse() {
     String stage = atomicState.broadcastStage ?: "initial"
     if (now() >= ((atomicState.broadcastUntil ?: 0L) as Long)) {
         if (stage == "initial") {
-            startSweepPhase("fast", 1, 150, "secondBroadcast")
+            startSweepPhase("fast", 1, SWEEP_PAUSE_FAST_MS, "secondBroadcast")
         } else {
             startRetrySweep(1)
         }
@@ -675,8 +675,8 @@ void broadcastPulse() {
     }
 
     broadcastTargets().each { ip ->
-        sendLifx(ip.toString(), 2)   // DEVICE.GET_SERVICE
-        sendLifx(ip.toString(), 32)  // DEVICE.GET_VERSION
+        sendLifx(ip.toString(), LIFX_MSG.GET_SERVICE)
+        sendLifx(ip.toString(), LIFX_MSG.GET_VERSION)
     }
 
     Map stats = atomicState.stats ?: emptyStats()
@@ -690,7 +690,7 @@ void broadcastPulse() {
     // Broadcast pulses go through the same rate-limited hub command queue as the sweep, so this
     // is paced conservatively too (4 packets/pulse) rather than the original 500ms/8-packets-
     // per-second rate that contributed to the "pending hub commands" backlog.
-    runInMillis(3000, "broadcastPulse")
+    runInMillis(BROADCAST_PULSE_INTERVAL_MS, "broadcastPulse")
 }
 
 void startRetrySweep(Integer pass) {
@@ -698,7 +698,7 @@ void startRetrySweep(Integer pass) {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
-    startSweepPhase("retry", pass, 150, pass < 2 ? "retryNext" : "slowSweep")
+    startSweepPhase("retry", pass, SWEEP_PAUSE_FAST_MS, pass < 2 ? "retryNext" : "slowSweep")
 }
 
 void startSlowSweep() {
@@ -706,7 +706,7 @@ void startSlowSweep() {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
-    startSweepPhase("slow", 1, 250, "finish")
+    startSweepPhase("slow", 1, SWEEP_PAUSE_SLOW_MS, "finish")
 }
 
 void startSweepPhase(String kind, Integer pass, Integer pauseMs, String after) {
@@ -761,7 +761,7 @@ void startSweepPhase(String kind, Integer pass, Integer pauseMs, String after) {
     stats.retryPass = kind == "retry" ? pass : (kind == "slow" ? 3 : 0)
     atomicState.stats = stats
 
-    runInMillis(20, "processSweepBatch")
+    runInMillis(SWEEP_BATCH_START_DELAY_MS, "processSweepBatch")
 }
 
 @SuppressWarnings("unused")
@@ -801,11 +801,11 @@ void processSweepBatch() {
     // outbound LAN packets were being queued far faster than the hub could actually dispatch
     // them (seen directly in hub logs). Sending fewer packets per batch and giving more time
     // between batches lets the hub's outbound queue drain in between.
-    Integer batchSize = Math.min(2, queue.size())
+    Integer batchSize = Math.min(SWEEP_BATCH_SIZE, queue.size())
     for (int i = 0; i < batchSize; i++) {
         if (allExpectedFound()) break
         String ip = queue.remove(0).toString()
-        sendLifx(ip, 32) // DEVICE.GET_VERSION exposes MAC + product/version
+        sendLifx(ip, LIFX_MSG.GET_VERSION) // exposes MAC + product/version
         Map stats = atomicState.stats ?: emptyStats()
         stats.sweepSent = ((stats.sweepSent ?: 0) as Integer) + 1
         atomicState.stats = stats
@@ -813,7 +813,7 @@ void processSweepBatch() {
     }
     state.sweepQueue = queue
     if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
-    runInMillis(300, "processSweepBatch")
+    runInMillis(SWEEP_BATCH_INTERVAL_MS, "processSweepBatch")
 }
 
 Boolean isIpAlreadyMatchedToCloud(String ip) {
@@ -1031,7 +1031,7 @@ def parseLifx(response) {
 
     Map dev = (records[mac] ?: [:]) as Map
     dev.ip = ip
-    dev.port = 56700
+    dev.port = LIFX_PORT
     dev.mac = mac
     dev.sourceMac = sourceMac
     dev.target = protocolTargetUid
@@ -1082,10 +1082,10 @@ def parseLifx(response) {
     stats.rawResponses = ((stats.rawResponses ?: 0) as Integer) + 1
 
     switch (parsed.type as Integer) {
-        case 3:
+        case LIFX_MSG.STATE_SERVICE:
             stats.service = ((stats.service ?: 0) as Integer) + 1
             break
-        case 33:
+        case LIFX_MSG.STATE_VERSION:
             Map version = parseStateVersion(parsed.payloadHex)
             dev.vendor = version.vendor ?: dev.vendor
             dev.product = version.product ?: dev.product
@@ -1100,21 +1100,21 @@ def parseLifx(response) {
                 // them already - this chain used to fire unconditionally for every responding
                 // device, adding 3 unthrottled extra round-trips each and badly backing up the
                 // hub's outbound command queue during a normal cloud-led discovery run.
-                sendLifx(ip, 51) // DEVICE.GET_GROUP
+                sendLifx(ip, LIFX_MSG.GET_GROUP)
             }
             stats.version = ((stats.version ?: 0) as Integer) + 1
             break
-        case 53:
+        case LIFX_MSG.STATE_GROUP:
             Map groupData = parseLabelPayload(parsed.payloadHex)
             if (groupData.label) dev.group = groupData.label
-            sendLifx(ip, 48) // DEVICE.GET_LOCATION
+            sendLifx(ip, LIFX_MSG.GET_LOCATION)
             break
-        case 50:
+        case LIFX_MSG.STATE_LOCATION:
             Map locationData = parseLabelPayload(parsed.payloadHex)
             if (locationData.label) dev.location = locationData.label
-            sendLifx(ip, 23) // DEVICE.GET_LABEL
+            sendLifx(ip, LIFX_MSG.GET_LABEL)
             break
-        case 25:
+        case LIFX_MSG.STATE_LABEL:
             String label = decodeLabel(parsed.payloadHex)
             if (label) dev.label = officialDeviceName(label)
             break
@@ -1129,7 +1129,7 @@ def parseLifx(response) {
         String cloudId = cloudMatch.cloudId?.toString() ?: c.id?.toString()
         if (cloudId) {
             c.ip = ip
-            c.port = 56700
+            c.port = LIFX_PORT
             c.lanUid = mac
             c.protocolTargetUid = protocolTargetUid
             c.controlUid = protocolTargetUid
@@ -1227,7 +1227,7 @@ void mergeLanOnlyIntoCurated(Map dev) {
     row.uid = uid
     row.label = dev.label ?: row.label ?: "LIFX ${uid}"
     row.ip = dev.ip ?: row.ip
-    row.port = dev.port ?: 56700
+    row.port = dev.port ?: LIFX_PORT
     row.lanUid = uid
     row.controlUid = normalisedUid(dev.controlUid ?: dev.protocolTargetUid ?: dev.target ?: uid)
     row.protocolTargetUid = row.controlUid
@@ -1673,7 +1673,7 @@ List<Map> removableSavedRows() {
 // that's legitimately rediscovered later isn't permanently hidden.
 Map recentRowRemovals() {
     Map recent = (atomicState.recentRowRemovals ?: [:]) as Map
-    Long cutoff = now() - 30000L
+    Long cutoff = now() - RECENT_REMOVAL_WINDOW_MS
     return recent.findAll { k, ts -> ((ts ?: 0L) as Long) >= cutoff }
 }
 
@@ -1935,7 +1935,7 @@ Map childDataMap(Map row, String driverType) {
         controlUidCandidates: "${controlUidCandidatesForRow(row).join(',')}",
         cloudUid: "${cloudUid ?: ''}",
         ip: "${row.ip ?: ''}",
-        port: "${row.port ?: 56700}",
+        port: "${row.port ?: LIFX_PORT}",
         label: "${row.label ?: ''}",
         displayLabel: "${childLabelForRow(row)}",
         localLabel: "${row.customLabel ?: row.localLabel ?: ''}",
@@ -2087,7 +2087,7 @@ Map rowForManagedChild(child) {
 
     row.label = row.label ?: childDataValue(child, "label") ?: label
     row.ip = childDataValue(child, "ip") ?: row.ip
-    row.port = childDataValue(child, "port") ?: row.port ?: 56700
+    row.port = childDataValue(child, "port") ?: row.port ?: LIFX_PORT
     row.lanUid = row.lanUid ?: lanUid
     row.uid = row.uid ?: lanUid
     row.id = row.id ?: childDataValue(child, "cloudUid") ?: lanUid
@@ -2172,7 +2172,7 @@ def pollManagedChildSwitchStatus() {
     rows.each { item ->
         Map row = item as Map
         if ((row.ip ?: '').toString().trim()) {
-            sendLifxToRow(row, 116, [], false, true, "parseChildLifx", 1, 0) // LIGHT.GET_POWER only
+            sendLifxToRow(row, LIFX_MSG.LIGHT_GET_POWER, [], false, true, "parseChildLifx", 1, 0) // on/off status only
             sent++
             pauseExecution(60)
         } else {
@@ -2200,17 +2200,17 @@ void refreshMasterSwitchMembership(masterDevice = null) {
 }
 
 void groupChildOn(device) {
-    sendBulkSetPower(65535, 0)
+    sendBulkSetPower(LIFX_FULL_ON, 0)
     try { device.sendEvent(name: "switch", value: "on") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void groupChildOff(device) {
-    sendBulkSetPower(0, 0)
+    sendBulkSetPower(LIFX_FULL_OFF, 0)
     try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void groupChildSetLevel(device, value, duration = 0) {
-    Integer level = clampInt(safeInt(value) ?: 0, 0, 100)
+    Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
     sendBulkSetLevel(level, durationMs(duration))
     try {
         device.sendEvent(name: "level", value: level)
@@ -2220,13 +2220,13 @@ void groupChildSetLevel(device, value, duration = 0) {
 
 void groupChildSetColor(device, Map colorMap, duration = 0) {
     Map cmap = colorMap ?: [:]
-    Integer hue100 = clampInt(safeInt(cmap.hue) ?: 0, 0, 100)
-    Integer sat100 = clampInt(safeInt(cmap.saturation) ?: 100, 0, 100)
+    Integer hue100 = clampInt(safeInt(cmap.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
+    Integer sat100 = clampInt(safeInt(cmap.saturation) ?: 100, PERCENT_MIN, PERCENT_MAX)
     // Level is an independent setting controlled via setLevel() - colour commands preserve the
     // Master Switch's current level rather than accepting their own, since a colour-map input's
     // level field is easy to submit stale/unedited and shouldn't be able to silently change
     // brightness as a side effect of a colour change.
-    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, 0, 100)
+    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, PERCENT_MIN, PERCENT_MAX)
     Integer requestedKelvin = safeInt(cmap.colorTemperature ?: cmap.kelvin) ?: 3500
     Integer dur = durationMs(cmap.duration ?: duration ?: 0)
     sendBulkSetColorOrLevel(hue100, sat100, lvl, requestedKelvin, dur)
@@ -2250,7 +2250,7 @@ void groupChildSetSaturation(device, value) {
 void groupChildSetColorTemperature(device, temperature = 3000, duration = 0) {
     Integer kelvin = clampInt(safeInt(temperature) ?: 3000, 1500, 9000)
     // Same principle as groupChildSetColor(): level is independent, preserved from current state.
-    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, 0, 100)
+    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, PERCENT_MIN, PERCENT_MAX)
     sendBulkSetColorTemperature(kelvin, lvl, durationMs(duration))
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
@@ -2279,7 +2279,7 @@ String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
     // Exposed for child drivers so individual child on/off can mirror the original Rob Heyes dispatch pattern:
     // driver calls parent to build the lightweight zero-target packet, then the driver sends one UDP packet
     // directly to its stored IP with ignoreResponse=true.
-    return buildLifxPacketForTarget(117, u16le(power ?: 0) + u32le(durationMs ?: 0), "", true, false, false)
+    return buildLifxPacketForTarget(LIFX_MSG.LIGHT_SET_POWER, u16le(power ?: 0) + u32le(durationMs ?: 0), "", true, false, false)
 }
 
 void sendBulkSetPower(Integer power, Integer durationMs = 0) {
@@ -2290,7 +2290,7 @@ void sendBulkSetPower(Integer power, Integer durationMs = 0) {
     // v4.7.3: app/fast-group power switching uses the original Rob Heyes style fast path:
     // one IP-directed, zero-target/tagged SET_POWER packet per light, no ACK,
     // no response, no callback, no UID-candidate fan-out.
-    rows.each { row -> sendFastSetToRow(row as Map, 117, payload) }
+    rows.each { row -> sendFastSetToRow(row as Map, LIFX_MSG.LIGHT_SET_POWER, payload) }
 
     String sw = (power ?: 0) > 0 ? "on" : "off"
     rows.each { row ->
@@ -2327,7 +2327,7 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
             sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
         }
         List<Integer> payload = [0] + u16le(hue) + u16le(sat) + u16le(brightness) + u16le(kelvin) + u32le(durationMs ?: 0)
-        sendFastSetToRow(row, 102, payload)
+        sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
         if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
     rows.each { row ->
@@ -2347,7 +2347,7 @@ private void sendPowerOnIfNeeded(Map row, child, Integer durationMs = 0) {
     // requires an explicit power-on packet whenever the light isn't already known to be on.
     try {
         if ((child?.currentValue('switch') ?: 'off') != 'on') {
-            sendFastSetToRow(row, 117, u16le(65535) + u32le(durationMs ?: 0))
+            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, u16le(LIFX_FULL_ON) + u32le(durationMs ?: 0))
         }
     } catch (Throwable t) { log.debug "sendPowerOnIfNeeded() failed: ${t.message}" }
 }
@@ -2378,7 +2378,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
             // Non-colour-capable lights receive only the requested brightness level.
             payload = [0] + u16le(0) + u16le(0) + u16le(brightness) + u16le(safeKelvin) + u32le(durationMs ?: 0)
         }
-        sendFastSetToRow(row, 102, payload)
+        sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
         if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
     rows.each { row ->
@@ -2400,14 +2400,14 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
 void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
-    Integer lvl = clampInt(level ?: 75, 0, 100)
+    Integer lvl = clampInt(level ?: 75, PERCENT_MIN, PERCENT_MAX)
     Integer brightness = scalePercentToLifx(lvl)
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3000)
         List<Integer> payload = [0] + u16le(0) + u16le(0) + u16le(brightness) + u16le(safeKelvin) + u32le(durationMs ?: 0)
-        sendFastSetToRow(row, 102, payload)
+        sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
         if (lvl > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
     rows.each { row ->
@@ -2431,7 +2431,7 @@ void sendFastSetToRow(Map row, Integer messageType, List<Integer> payload = []) 
 
 void sendFastUdpToIp(Map row, Integer messageType, List<Integer> payload = []) {
     if (!row?.ip) return
-    Integer port = safeInt(row.port) ?: 56700
+    Integer port = safeInt(row.port) ?: LIFX_PORT
     String packet = buildLifxPacketForTarget(messageType, payload ?: [], "", true, false, false)
     sendHubCommand(new hubitat.device.HubAction(
         packet,
@@ -2473,18 +2473,18 @@ void childOnOffFallback(device, String value) {
 
 void childOn(device) {
     Map row = rowForChild(device)
-    sendSetPower(row, 65535, 0)
+    sendSetPower(row, LIFX_FULL_ON, 0)
     try { device.sendEvent(name: "switch", value: "on") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void childOff(device) {
     Map row = rowForChild(device)
-    sendSetPower(row, 0, 0)
+    sendSetPower(row, LIFX_FULL_OFF, 0)
     try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void childSetLevel(device, value, duration = 0) {
-    Integer level = clampInt(safeInt(value) ?: 0, 0, 100)
+    Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Map row = rowForChild(device)
     Integer kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
     // Only replay the cached colour if the light is actually showing it right now (colorMode RGB) -
@@ -2498,7 +2498,7 @@ void childSetLevel(device, value, duration = 0) {
     sendSetColor(row, hue, sat, bri, kelvin, durMs)
     // LIFX tracks power separately from brightness, so setLevel() alone won't wake a bulb that's
     // physically off - send an explicit power-on to match standard SwitchLevel/Hue-style behaviour.
-    if (level > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, 65535, durMs)
+    if (level > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, LIFX_FULL_ON, durMs)
     try {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
@@ -2509,11 +2509,11 @@ void childSetLevel(device, value, duration = 0) {
 void childSetColorTemperature(device, temp, level = null, duration = 0) {
     Map row = rowForChild(device)
     Integer kelvin = clampKelvin(row, safeInt(temp) ?: 3500)
-    Integer lvl = clampInt(safeInt(level) ?: safeInt(device.currentValue('level')) ?: 100, 0, 100)
+    Integer lvl = clampInt(safeInt(level) ?: safeInt(device.currentValue('level')) ?: 100, PERCENT_MIN, PERCENT_MAX)
     Integer durMs = durationMs(duration)
     sendSetColor(row, 0, 0, scalePercentToLifx(lvl), kelvin, durMs)
     // Colour-temperature commands should wake the bulb, matching Hue-style rule behaviour.
-    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, 65535, durMs)
+    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, LIFX_FULL_ON, durMs)
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "level", value: lvl)
@@ -2527,15 +2527,15 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
 
 void childSetColor(device, Map colorMap, duration = 0) {
     Map row = rowForChild(device)
-    Integer hue100 = clampInt(safeInt(colorMap?.hue) ?: 0, 0, 100)
-    Integer sat100 = clampInt(safeInt(colorMap?.saturation) ?: 100, 0, 100)
-    Integer lvl = clampInt(safeInt(colorMap?.level ?: colorMap?.brightness ?: 100) ?: 100, 0, 100)
+    Integer hue100 = clampInt(safeInt(colorMap?.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
+    Integer sat100 = clampInt(safeInt(colorMap?.saturation) ?: 100, PERCENT_MIN, PERCENT_MAX)
+    Integer lvl = clampInt(safeInt(colorMap?.level ?: colorMap?.brightness ?: 100) ?: 100, PERCENT_MIN, PERCENT_MAX)
     Integer kelvin = clampKelvin(row, safeInt(colorMap?.colorTemperature ?: colorMap?.kelvin) ?: safeInt(device.currentValue('colorTemperature')) ?: 3500)
     Integer durMs = durationMs(duration)
     sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durMs)
     // Colour commands should wake the bulb, matching Hue-style rule behaviour - LIFX tracks power
     // separately from colour, so a colour-only packet won't turn on a bulb that's physically off.
-    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, 65535, durMs)
+    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, LIFX_FULL_ON, durMs)
     try {
         device.sendEvent(name: "hue", value: hue100)
         device.sendEvent(name: "saturation", value: sat100)
@@ -2557,8 +2557,8 @@ void childSetSaturation(device, value) {
 
 void childSetInfraredLevel(device, value) {
     Map row = rowForChild(device)
-    Integer level = clampInt(safeInt(value) ?: 0, 0, 100)
-    sendLifxToRow(row, 122, u16le(scalePercentToLifx(level)), true, false, "parseChildLifx", 1, 0) // LIGHT.SET_INFRARED, ack requested
+    Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
+    sendLifxToRow(row, LIFX_MSG.LIGHT_SET_INFRARED, u16le(scalePercentToLifx(level)), true, false, "parseChildLifx", 1, 0) // ack requested
     try { device.sendEvent(name: "IRLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(IRLevel) failed: ${t.message}" }
     try { device.sendEvent(name: "infraredLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(infraredLevel) failed: ${t.message}" }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
@@ -2566,12 +2566,12 @@ void childSetInfraredLevel(device, value) {
 
 void childRefresh(device) {
     Map row = rowForChild(device)
-    sendLifxToRow(row, 101, [], false, true, "parseChildLifx", 1, 0)   // LIGHT.GET, response requested
+    sendLifxToRow(row, LIFX_MSG.LIGHT_GET, [], false, true, "parseChildLifx", 1, 0)         // response requested
     pauseExecution(80)
-    sendLifxToRow(row, 116, [], false, true, "parseChildLifx", 1, 0)   // LIGHT.GET_POWER, response requested
+    sendLifxToRow(row, LIFX_MSG.LIGHT_GET_POWER, [], false, true, "parseChildLifx", 1, 0)   // response requested
     if (truthy(row.hasIr)) {
         pauseExecution(80)
-        sendLifxToRow(row, 120, [], false, true, "parseChildLifx", 1, 0) // LIGHT.GET_INFRARED, response requested
+        sendLifxToRow(row, LIFX_MSG.LIGHT_GET_INFRARED, [], false, true, "parseChildLifx", 1, 0) // response requested
     }
 }
 
@@ -2587,20 +2587,20 @@ void sendSetPower(Map row, Integer power, Integer durationMs = 0) {
     // v4.7.1: same fast packet path as the aggregate group. This matters when a
     // Hubitat group calls every child on/off individually; each child now emits
     // one lightweight UDP packet instead of a multi-candidate ACK command.
-    sendFastUdpToIp(row, 117, u16le(power ?: 0) + u32le(durationMs ?: 0)) // LIGHT.SET_POWER
+    sendFastUdpToIp(row, LIFX_MSG.LIGHT_SET_POWER, u16le(power ?: 0) + u32le(durationMs ?: 0))
 }
 
 void sendSetColor(Map row, Integer hue, Integer saturation, Integer brightness, Integer kelvin, Integer durationMs = 0) {
     // lifxlan reference payload: reserved uint8 + HSBK uint16[4] + duration uint32
     List<Integer> payload = [0] + u16le(hue ?: 0) + u16le(saturation ?: 0) + u16le(brightness ?: 0) + u16le(clampKelvin(row, kelvin ?: 3500)) + u32le(durationMs ?: 0)
-    sendLifxToRow(row, 102, payload, true, false, "parseChildLifx", 1, 0) // LIGHT.SET_COLOR, ack requested
+    sendLifxToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload, true, false, "parseChildLifx", 1, 0) // ack requested
 }
 
 void sendLifxToRow(Map row, Integer messageType, List<Integer> payload = [], Boolean ackRequested = false, Boolean responseRequired = false, String callback = "parseChildLifx", Integer repeats = 1, Integer repeatPauseMs = 0) {
     if (!row?.ip) return
     List<String> targets = controlUidCandidatesForRow(row)
     if (!targets) return
-    Integer port = safeInt(row.port) ?: 56700
+    Integer port = safeInt(row.port) ?: LIFX_PORT
     Integer count = clampInt(repeats ?: 1, 1, 3)
 
     targets.eachWithIndex { target, targetIndex ->
@@ -2640,9 +2640,9 @@ def parseChildLifx(response) {
     if (!child) return
 
     try {
-        if ((parsed.type as Integer) == 45) {
+        if ((parsed.type as Integer) == LIFX_MSG.ACK) {
             return // LIFX acknowledgement for SET workflows
-        } else if ((parsed.type as Integer) == 107) {
+        } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE) {
             Map light = parseLightState(parsed.payloadHex)
             if (light.label) child.sendEvent(name: "label", value: light.label)
             child.sendEvent(name: "switch", value: ((light.power ?: 0) as Integer) > 0 ? "on" : "off")
@@ -2650,10 +2650,10 @@ def parseChildLifx(response) {
             child.sendEvent(name: "hue", value: scaleDown100(light.hue ?: 0))
             child.sendEvent(name: "saturation", value: scaleDown100(light.saturation ?: 0))
             child.sendEvent(name: "colorTemperature", value: light.kelvin ?: 3500)
-        } else if ((parsed.type as Integer) == 118) {
+        } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_POWER) {
             Integer power = leU16(parsed.payloadHex, 0)
             child.sendEvent(name: "switch", value: power > 0 ? "on" : "off")
-        } else if ((parsed.type as Integer) == 121) {
+        } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_INFRARED) {
             Integer ir = leU16(parsed.payloadHex, 0)
             Integer irLevel = scaleDown100(ir)
             child.sendEvent(name: "IRLevel", value: irLevel)
@@ -2703,7 +2703,7 @@ String buildLifxPacketForTarget(Integer messageType, List<Integer> payload, Stri
 }
 
 Integer scalePercentToLifx(value) {
-    Integer v = clampInt(safeInt(value) ?: 0, 0, 100)
+    Integer v = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
     return Math.round((v * 65535.0d) / 100.0d) as Integer
 }
 
@@ -3135,7 +3135,7 @@ void sendLifx(String ip, Integer messageType) {
         hubitat.device.Protocol.LAN,
         [
             type: hubitat.device.HubAction.Type.LAN_TYPE_UDPCLIENT,
-            destinationAddress: "${ip}:56700",
+            destinationAddress: "${ip}:${LIFX_PORT}",
             encoding: hubitat.device.HubAction.Encoding.HEX_STRING,
             ignoreWarning: true,
             parseWarning: false,
