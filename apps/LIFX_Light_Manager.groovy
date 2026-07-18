@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.4.5
+ * Version: 1.4.6
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches

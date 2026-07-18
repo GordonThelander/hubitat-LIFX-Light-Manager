@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.4.5
+**Version:** 1.4.6
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -108,13 +108,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.4.5 |
-| App | 1.4.5 |
-| White Mono driver | 1.4.5 |
-| Tunable White driver | 1.4.5 |
-| Colour driver | 1.4.5 |
-| Plus Colour driver | 1.4.5 |
-| Master Switch driver | 1.4.5 |
+| Package | 1.4.6 |
+| App | 1.4.6 |
+| White Mono driver | 1.4.6 |
+| Tunable White driver | 1.4.6 |
+| Colour driver | 1.4.6 |
+| Plus Colour driver | 1.4.6 |
+| Master Switch driver | 1.4.6 |
 
 ## Known limitations
 
@@ -128,6 +128,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.4.6:** Correctness patch from an external static code review, verified against current code before fixing. Explicit zero values (saturation 0, level 0) are no longer silently overwritten by defaults. `setLevel(0)` now sends a real LIFX power-off instead of just dimming to black while staying powered. Master Switch off no longer clobbers cached child brightness, and Master Switch refresh no longer collapses level to a binary 100/0. A light recoloured outside Hubitat (e.g. from the LIFX app) now has its colour mode reconciled on refresh instead of going white on the next brightness change. Discovery's scheduled jobs are now isolated from status polling and the firmware-check resend, so starting or stopping Discovery no longer silently disables them. Colour-temperature events are now gated to devices that actually support colour temperature. Individual child commands and LAN response parsing now survive Clear all Data for already-installed devices, matching how the Master Switch already behaved.
 
 **1.4.5:** Adds an on-demand Firmware version check (under Advanced) that queries every saved device over LAN, including devices not yet installed as child devices, with a Firmware column added to the Device preparation table and a single automatic resend for any device that doesn't respond the first time. The Device preparation, LIFX Cloud source and LAN responses tables now auto-size their columns to content instead of using fixed pixel widths, wrapping any unexpectedly long value instead of stretching the table, while the shared identity columns (UID, Label, Local name, IP address, Last seen) stay aligned across all three tables. Reworded the Attribution section for accuracy after reviewing the original LIFX Master source directly.
 

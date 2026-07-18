@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-07-18",
-  "releaseNotes": "1.4.5: adds an on-demand Firmware version check (under Advanced) that queries every saved device over LAN, including devices not yet installed as child devices, with a Firmware column added to the Device preparation table and a single automatic resend for any device that doesn't respond the first time. The Device preparation, LIFX Cloud source and LAN responses tables now auto-size their columns to content instead of using fixed pixel widths, wrapping any unexpectedly long value instead of stretching the table, while the shared identity columns (UID, Label, Local name, IP address, Last seen) stay aligned across all three tables. Reworded the Attribution section for accuracy after reviewing the original LIFX Master source directly. 1.4.4: internal code-quality refactor of the app file, no behaviour change - introduces named constants for the LIFX port, message-type codes, discovery pacing values and clamp bounds, and removes duplicated packet-building logic between individual child-device commands and Master Switch bulk commands (shared buildHsbkPayload/buildSetPowerPayload/sendPowerOnIfNeeded helpers are now used by both), directly targeting the class of bug that required two separate fixes in 1.4.2 and 1.4.3. 1.4.3: the LIFX Master Switch now exposes ColorControl and ColorTemperature as real capabilities (plus Light, restoring its light classification in Google Home/Dashboard/Rule Machine), adding Set Hue and Set Saturation support. Non-colour-capable member bulbs remain unaffected by colour commands, since the app only sends hue/saturation data to bulbs that actually support it. Set Color Temperature's parameter order now matches Hubitat's standard signature (temperature, level, transitionTime) so Rule Machine's own UI lines up correctly, while still treating level as an independent setting. Colour/CT/level commands now also send an explicit power-on when the light isn't already known to be on, matching Hue-style rule behaviour instead of requiring a separate On action. 1.4.2: fixes the LIFX Master Switch so level is a genuinely independent setting - Set Color and Set Master Color Temperature no longer change brightness as a side effect, whether from a stale/unedited colour-map level field or from a colour-mode leak where a light in CT/white mode had its old cached hue/saturation replayed on every brightness change, pulling it back to a stale colour. Fixes a noisy but harmless cast exception when the colour/level Duration field is left blank. Renames the Master Switch's 'Apply Default Colour Temperature' command to 'Apply Default', which now also applies the configured default level alongside the default colour temperature. 1.4.1: fixes the actual root cause of unreliable discovery - Hubitat's own outbound command rate limit was being exceeded, seen directly as hub-side 'pending hub commands' errors - by removing a redundant per-device LAN naming chain for cloud-matched devices, pacing the LAN sweep far more conservatively, and leaning much harder on cheap broadcast discovery before falling back to the expensive per-address sweep. Fixes Clear all Data not resetting leftover result banners. Fixes the saved-row removal list being able to show a just-removed row. Fixes the Device preparation table's Local name column reading a stale cached snapshot instead of the live installed child device's name. Removes the Local name column from the Cloud source table (Cloud never has this data). The Advanced section now starts hidden on every visit rather than staying open once toggled, and the optional child status polling controls have moved under Advanced to simplify the default view. Bolded section headings for readability.",
+  "releaseNotes": "1.4.6: correctness patch from an external static code review, verified against current code before fixing. Explicit zero values (saturation 0, level 0) are no longer silently overwritten by defaults. setLevel(0) now sends a real LIFX power-off instead of just dimming to black while staying powered. Master Switch off no longer clobbers cached child brightness, and Master Switch refresh no longer collapses level to a binary 100/0. A light recoloured outside Hubitat (e.g. from the LIFX app) now has its colour mode reconciled on refresh instead of going white on the next brightness change. Discovery's scheduled jobs are now isolated from status polling and the firmware-check resend, so starting or stopping Discovery no longer silently disables them. Colour-temperature events are now gated to devices that actually support colour temperature. Individual child commands and LAN response parsing now survive Clear all Data for already-installed devices, matching how the Master Switch already behaved. 1.4.5: adds an on-demand Firmware version check (under Advanced) that queries every saved device over LAN, including devices not yet installed as child devices, with a Firmware column added to the Device preparation table and a single automatic resend for any device that doesn't respond the first time. The Device preparation, LIFX Cloud source and LAN responses tables now auto-size their columns to content instead of using fixed pixel widths, wrapping any unexpectedly long value instead of stretching the table, while the shared identity columns (UID, Label, Local name, IP address, Last seen) stay aligned across all three tables. Reworded the Attribution section for accuracy after reviewing the original LIFX Master source directly. 1.4.4: internal code-quality refactor of the app file, no behaviour change - introduces named constants for the LIFX port, message-type codes, discovery pacing values and clamp bounds, and removes duplicated packet-building logic between individual child-device commands and Master Switch bulk commands (shared buildHsbkPayload/buildSetPowerPayload/sendPowerOnIfNeeded helpers are now used by both), directly targeting the class of bug that required two separate fixes in 1.4.2 and 1.4.3. 1.4.3: the LIFX Master Switch now exposes ColorControl and ColorTemperature as real capabilities (plus Light, restoring its light classification in Google Home/Dashboard/Rule Machine), adding Set Hue and Set Saturation support. Non-colour-capable member bulbs remain unaffected by colour commands, since the app only sends hue/saturation data to bulbs that actually support it. Set Color Temperature's parameter order now matches Hubitat's standard signature (temperature, level, transitionTime) so Rule Machine's own UI lines up correctly, while still treating level as an independent setting. Colour/CT/level commands now also send an explicit power-on when the light isn't already known to be on, matching Hue-style rule behaviour instead of requiring a separate On action. 1.4.2: fixes the LIFX Master Switch so level is a genuinely independent setting - Set Color and Set Master Color Temperature no longer change brightness as a side effect, whether from a stale/unedited colour-map level field or from a colour-mode leak where a light in CT/white mode had its old cached hue/saturation replayed on every brightness change, pulling it back to a stale colour. Fixes a noisy but harmless cast exception when the colour/level Duration field is left blank. Renames the Master Switch's 'Apply Default Colour Temperature' command to 'Apply Default', which now also applies the configured default level alongside the default colour temperature. 1.4.1: fixes the actual root cause of unreliable discovery - Hubitat's own outbound command rate limit was being exceeded, seen directly as hub-side 'pending hub commands' errors - by removing a redundant per-device LAN naming chain for cloud-matched devices, pacing the LAN sweep far more conservatively, and leaning much harder on cheap broadcast discovery before falling back to the expensive per-address sweep. Fixes Clear all Data not resetting leftover result banners. Fixes the saved-row removal list being able to show a just-removed row. Fixes the Device preparation table's Local name column reading a stale cached snapshot instead of the live installed child device's name. Removes the Local name column from the Cloud source table (Cloud never has this data). The Advanced section now starts hidden on every visit rather than staying open once toggled, and the optional child status polling controls have moved under Advanced to simplify the default view. Bolded section headings for readability.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.4.5"
+      "version": "1.4.6"
     }
   ],
   "drivers": [
@@ -24,7 +24,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_White_Mono_Driver.groovy",
       "required": true,
-      "version": "1.4.5"
+      "version": "1.4.6"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2002",
@@ -32,7 +32,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Tunable_White_Driver.groovy",
       "required": true,
-      "version": "1.4.5"
+      "version": "1.4.6"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2003",
@@ -40,7 +40,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Colour_Driver.groovy",
       "required": true,
-      "version": "1.4.5"
+      "version": "1.4.6"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2004",
@@ -48,7 +48,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Plus_Colour_Driver.groovy",
       "required": true,
-      "version": "1.4.5"
+      "version": "1.4.6"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af3001",
@@ -56,7 +56,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Master_Switch_Driver.groovy",
       "required": true,
-      "version": "1.4.5"
+      "version": "1.4.6"
     }
   ]
 }
