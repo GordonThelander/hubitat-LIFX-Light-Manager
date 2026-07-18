@@ -2602,20 +2602,20 @@ void childOnOffFallback(device, String value) {
 }
 
 void childOn(device) {
-    Map row = rowForChild(device)
+    Map row = rowForManagedChild(device)
     sendSetPower(row, LIFX_FULL_ON, 0)
     try { device.sendEvent(name: "switch", value: "on") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void childOff(device) {
-    Map row = rowForChild(device)
+    Map row = rowForManagedChild(device)
     sendSetPower(row, LIFX_FULL_OFF, 0)
     try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 void childSetLevel(device, value, duration = 0) {
     Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
-    Map row = rowForChild(device)
+    Map row = rowForManagedChild(device)
     Integer durMs = durationMs(duration)
     if (level <= 0) {
         // LIFX tracks power separately from brightness, so dimming to 0 via SET_COLOR alone
@@ -2648,7 +2648,7 @@ void childSetLevel(device, value, duration = 0) {
 }
 
 void childSetColorTemperature(device, temp, level = null, duration = 0) {
-    Map row = rowForChild(device)
+    Map row = rowForManagedChild(device)
     Integer kelvin = clampKelvin(row, safeInt(temp) ?: 3500)
     Integer lvl = clampInt(firstNonNullInt([level, device.currentValue('level')], 100), PERCENT_MIN, PERCENT_MAX)
     Integer durMs = durationMs(duration)
@@ -2667,7 +2667,7 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
 }
 
 void childSetColor(device, Map colorMap, duration = 0) {
-    Map row = rowForChild(device)
+    Map row = rowForManagedChild(device)
     Integer hue100 = clampInt(safeInt(colorMap?.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Integer sat100 = clampInt(intOrDefault(colorMap?.saturation, 100), PERCENT_MIN, PERCENT_MAX)
     Integer lvl = clampInt(firstNonNullInt([colorMap?.level, colorMap?.brightness], 100), PERCENT_MIN, PERCENT_MAX)
@@ -2697,7 +2697,7 @@ void childSetSaturation(device, value) {
 }
 
 void childSetInfraredLevel(device, value) {
-    Map row = rowForChild(device)
+    Map row = rowForManagedChild(device)
     Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
     sendLifxToRow(row, LIFX_MSG.LIGHT_SET_INFRARED, u16le(scalePercentToLifx(level)), true, false, "parseChildLifx", 1, 0) // ack requested
     try { device.sendEvent(name: "IRLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(IRLevel) failed: ${t.message}" }
@@ -2708,7 +2708,7 @@ void childSetInfraredLevel(device, value) {
 void childRefresh(device) {
     // Both pauseExecution calls below block whatever calling context invoked childRefresh (Rule
     // Machine, dashboard, Google Home) - up to 160ms total for IR-capable devices.
-    Map row = rowForChild(device)
+    Map row = rowForManagedChild(device)
     sendLifxToRow(row, LIFX_MSG.LIGHT_GET, [], false, true, "parseChildLifx", 1, 0)         // response requested
     pauseExecution(80)
     sendLifxToRow(row, LIFX_MSG.LIGHT_GET_POWER, [], false, true, "parseChildLifx", 1, 0)   // response requested
@@ -2779,9 +2779,18 @@ def parseChildLifx(response) {
     Map match = findCuratedMatchForLanUid(sourceMac, atomicState.curatedRows ?: [:])
     if (!match && protocolTargetUid) match = findCuratedMatchForControlUid(protocolTargetUid, atomicState.curatedRows ?: [:])
     Map row = match?.curated as Map
-    if (!row) return
-
-    def child = getChildDevice(childDniForRow(row))
+    def child = row ? getChildDevice(childDniForRow(row)) : null
+    if (!child) {
+        // Curated row lookup failed (e.g. after Clear all Data) - fall back to matching directly
+        // against installed child devices' own persisted identity, so refresh/state responses for
+        // already-installed devices keep working even if the saved device table is gone.
+        child = managedLifxLightChildren().find { c ->
+            String lan = normalisedUid(childDataValue(c, "lanUid") ?: childDataValue(c, "uid"))
+            String control = normalisedUid(childDataValue(c, "controlUid") ?: childDataValue(c, "protocolTargetUid"))
+            (lan && lan == sourceMac) || (control && control == protocolTargetUid)
+        }
+        if (child) row = rowForManagedChild(child)
+    }
     if (!child) return
 
     try {
