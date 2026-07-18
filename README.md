@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.4.4
+**Version:** 1.4.5
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -8,7 +8,7 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 
 - Uses a LIFX Personal Access Token for discovery and metadata enrichment.
 - Discovers LIFX lights on the local LAN and records their current IP addresses.
-- Maintains a device preparation table showing label, local name, IP address, group, product, capabilities, driver mode, cloud connection and status.
+- Maintains a device preparation table showing label, local name, IP address, group, product, firmware version, capabilities, driver mode, cloud connection and status.
 - Supports optional local Hubitat names before child-device creation.
 - Handles Cloud ID to LAN UID mismatches, including the observed `cloud+1` MAC address anomaly edge case.
 - Creates Hubitat child devices for mono, tunable white, colour and Plus/IR-capable LIFX lights.
@@ -18,6 +18,7 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports fast local on/off control for individual children and the Master Switch.
 - Supports Master Switch colour and colour-temperature control, applying colour to colour-capable lights and level-only changes to non-colour lights.
 - Supports optional lightweight LAN polling of installed child devices.
+- Supports an on-demand firmware version check over LAN for every saved device, including ones not yet installed as child devices.
 - Driver format compatibility with Google Home that exposes device capabilities (known issue that colour has to be set once outside of Goole Home and then to use Google to change the colour manually to lock in the RGB capability)  
 
 ## Components
@@ -105,13 +106,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.4.4 |
-| App | 1.4.4 |
-| White Mono driver | 1.4.4 |
-| Tunable White driver | 1.4.4 |
-| Colour driver | 1.4.4 |
-| Plus Colour driver | 1.4.4 |
-| Master Switch driver | 1.4.4 |
+| Package | 1.4.5 |
+| App | 1.4.5 |
+| White Mono driver | 1.4.5 |
+| Tunable White driver | 1.4.5 |
+| Colour driver | 1.4.5 |
+| Plus Colour driver | 1.4.5 |
+| Master Switch driver | 1.4.5 |
 
 ## Known limitations
 
@@ -122,9 +123,11 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 ## Attribution
 
-This project was developed after reviewing the original **LIFX Master** Hubitat integration by Robert Alan Heyes. It uses similar LIFX LAN protocol concepts, particularly around local UDP command dispatch, while adding a new cloud-assisted device discovery workflow and Master Switch management model.
+This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.4.5:** Adds an on-demand Firmware version check (under Advanced) that queries every saved device over LAN, including devices not yet installed as child devices, with a Firmware column added to the Device preparation table and a single automatic resend for any device that doesn't respond the first time. The Device preparation, LIFX Cloud source and LAN responses tables now auto-size their columns to content instead of using fixed pixel widths, wrapping any unexpectedly long value instead of stretching the table, while the shared identity columns (UID, Label, Local name, IP address, Last seen) stay aligned across all three tables. Reworded the Attribution section for accuracy after reviewing the original LIFX Master source directly.
 
 **1.4.4:** Internal code-quality refactor of the app file - no behaviour change. Introduces named constants for the LIFX port, message-type codes, discovery pacing values and clamp bounds, and removes duplicated packet-building logic between individual child-device commands and Master Switch bulk commands (a shared `buildHsbkPayload`/`buildSetPowerPayload`/`sendPowerOnIfNeeded` are now used by both). This directly targets the class of bug that required two separate fixes in 1.4.2/1.4.3.
 

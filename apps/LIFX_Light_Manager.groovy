@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.4.4
+ * Version: 1.4.5
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -47,6 +47,7 @@ preferences {
 
 @Field static final Map LIFX_MSG = [
     GET_SERVICE: 2, STATE_SERVICE: 3, GET_VERSION: 32, STATE_VERSION: 33,
+    GET_HOST_FIRMWARE: 14, STATE_HOST_FIRMWARE: 15,
     GET_GROUP: 51, STATE_GROUP: 53, GET_LOCATION: 48, STATE_LOCATION: 50,
     GET_LABEL: 23, STATE_LABEL: 25, ACK: 45,
     LIGHT_GET: 101, LIGHT_SET_COLOR: 102, LIGHT_STATE: 107,
@@ -69,6 +70,7 @@ preferences {
 @Field static final Long BROADCAST_DURATION_MS = 45000L
 @Field static final Long STALE_RUN_THRESHOLD_MS = 180000L
 @Field static final Long RECENT_REMOVAL_WINDOW_MS = 30000L
+@Field static final Integer FIRMWARE_RESEND_DELAY_MS = 2500
 
 @Field static final Integer PERCENT_MIN = 0
 @Field static final Integer PERCENT_MAX = 100
@@ -94,6 +96,7 @@ def appButtonHandler(String btn) {
     if (btn == "renameDiscoveredLightsBtn") renameDiscoveredLightsFromSettings()
     if (btn == "applyStatusPollingBtn") configureStatusPolling()
     if (btn == "pollStatusNowBtn") pollManagedChildSwitchStatus()
+    if (btn == "checkFirmwareBtn") checkDeviceFirmware()
     if (btn == "renameChildDevicesBtn") renameManagedChildDevicesFromSettings()
     if (btn == "createFastGroupBtn") createOrUpdateFastGroupChildDevice()
     if (btn == "advancedBtn") toggleAdvanced()
@@ -239,6 +242,11 @@ void renderMainPageContent(Boolean advanced) {
             input "pollStatusNowBtn", "button", title: "Poll status now", submitOnChange: true
             if (atomicState.statusPollingResult) paragraph atomicState.statusPollingResult
         }
+        section("<b>Firmware check</b>") {
+            paragraph "Queries the LIFX LAN firmware version for every saved device with a known IP address, including devices not yet installed as child devices. Manual/on-demand only - not part of automatic Discovery."
+            input "checkFirmwareBtn", "button", title: "Check firmware", submitOnChange: true
+            if (atomicState.firmwareCheckResult) paragraph atomicState.firmwareCheckResult
+        }
         section("<b>Remove stale saved rows</b>") {
             paragraph "Rows below have no installed Hubitat child device and can be safely removed from the saved device table - for example, a device deleted from LIFX Cloud. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
             List<Map> removable = removableSavedRows()
@@ -282,6 +290,7 @@ void initialiseState() {
     if (atomicState.discoveredRenameResult == null) atomicState.discoveredRenameResult = ""
     if (atomicState.childRenameResult == null) atomicState.childRenameResult = ""
     if (atomicState.statusPollingResult == null) atomicState.statusPollingResult = ""
+    if (atomicState.firmwareCheckResult == null) atomicState.firmwareCheckResult = ""
     if (atomicState.rowRemovalResult == null) atomicState.rowRemovalResult = ""
     if (lifxCloudToken == null) app.updateSetting("lifxCloudToken", [type: "password", value: ""])
     if (fastGroupName == null) app.updateSetting("fastGroupName", [type: "text", value: "LIFX MASTER SWITCH"])
@@ -883,6 +892,7 @@ void clearAllData() {
     atomicState.discoveredRenameResult = ""
     atomicState.childRenameResult = ""
     atomicState.statusPollingResult = ""
+    atomicState.firmwareCheckResult = ""
     atomicState.rowRemovalResult = ""
     atomicState.recentRowRemovals = [:]
     try { app.removeSetting("selectedChildUids") } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
@@ -1106,6 +1116,15 @@ def parseLifx(response) {
             }
             stats.version = ((stats.version ?: 0) as Integer) + 1
             break
+        case LIFX_MSG.STATE_HOST_FIRMWARE:
+            // Only sent in response to the manual Check firmware button, not automatic discovery -
+            // reuses the same cloud-matched write-back path as STATE_VERSION above.
+            Map fw = parseFirmwarePayload(parsed.payloadHex)
+            if (c) {
+                c.firmwareVersion = fw.version ?: c.firmwareVersion
+                c.firmwareCheckedAt = now()
+            }
+            break
         case LIFX_MSG.STATE_GROUP:
             Map groupData = parseLabelPayload(parsed.payloadHex)
             if (groupData.label) dev.group = groupData.label
@@ -1195,6 +1214,15 @@ Map parseDeviceParams(String description) {
 Map parseStateVersion(String payloadHex) {
     if (!payloadHex || payloadHex.size() < 24) return [:]
     [vendor: leU32(payloadHex, 0), product: leU32(payloadHex, 8), version: leU32(payloadHex, 16)]
+}
+
+Map parseFirmwarePayload(String payloadHex) {
+    // STATE_HOST_FIRMWARE payload: build(u64) + reserved(u64) + minor(u16) + major(u16).
+    if (!payloadHex || payloadHex.size() < 40) return [:]
+    Long build = leU64(payloadHex, 0)
+    Integer minor = leU16(payloadHex, 32)
+    Integer major = leU16(payloadHex, 36)
+    return [build: build, major: major, minor: minor, version: "${major}.${minor}".toString()]
 }
 
 
@@ -2190,6 +2218,44 @@ def pollManagedChildSwitchStatus() {
     refreshMasterSwitchMembership()
 }
 
+@SuppressWarnings("unused")
+void checkDeviceFirmware() {
+    // Runs over every saved row with an IP (not just installed children) so not-yet-installed
+    // devices get checked too. Manual/on-demand only - firmware isn't available from LIFX Cloud,
+    // so this is a separate action from Discovery rather than an extra per-device LAN round-trip
+    // added to the already carefully-paced discovery flow.
+    atomicState.firmwareCheckStartedAt = now()
+    List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
+    Integer sent = 0
+    Integer skipped = 0
+    rows.each { row ->
+        if ((row.ip ?: '').toString().trim()) {
+            sendLifx(row.ip.toString(), LIFX_MSG.GET_HOST_FIRMWARE)
+            sent++
+            pauseExecution(60)
+        } else {
+            skipped++
+        }
+    }
+    atomicState.firmwareCheckResult = "Firmware check sent to ${sent} device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update the Firmware column as they arrive."
+    // A single fire-and-forget UDP query per device can drop occasionally, so any row that
+    // hasn't responded by this point gets one automatic resend - not a full retry loop.
+    if (sent > 0) runInMillis(FIRMWARE_RESEND_DELAY_MS, "resendFirmwareCheck")
+}
+
+@SuppressWarnings("unused")
+void resendFirmwareCheck() {
+    Long startedAt = (atomicState.firmwareCheckStartedAt ?: 0L) as Long
+    List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
+        .findAll { (it.ip ?: '').toString().trim() && ((it.firmwareCheckedAt ?: 0L) as Long) < startedAt }
+    if (!rows) return
+    rows.each { row ->
+        sendLifx(row.ip.toString(), LIFX_MSG.GET_HOST_FIRMWARE)
+        pauseExecution(60)
+    }
+    atomicState.firmwareCheckResult = "Firmware check resent to ${rows.size()} device${rows.size() == 1 ? '' : 's'} that hadn't responded yet."
+}
+
 void refreshMasterSwitchMembership(masterDevice = null) {
     def dev = masterDevice ?: getChildDevice(fastGroupDni())
     if (!dev) return
@@ -2786,20 +2852,22 @@ String curatedTableHtml() {
     StringBuilder b = new StringBuilder()
     b << tableOpenHtml()
     b << "<tr>"
-    ["UID", "Label", "Local name", "IP address", "Last seen", "Group", "Product", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
-        b << headerCell(h, idx, h == "Cloud connected" ? "connected" : null)
+    Map curatedHeaderKeys = ["UID":"uid", "Label":"label", "Local name":"localName", "IP address":"ip", "Last seen":"lastSeen", "Cloud connected":"connected"]
+    ["UID", "Label", "Local name", "IP address", "Last seen", "Group", "Product", "Firmware", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
+        b << headerCell(h, idx, curatedHeaderKeys[h])
     }
     b << "</tr>"
     rows.each { r ->
         b << "<tr>"
-        b << cell(r.id ?: r.uid, 0)
-        b << cell(r.label, 1)
-        b << cell(localNameForRow(r), 1)
-        b << cell(r.ip, 2)
-        b << cell(curatedLastSeen(r), 3)
+        b << cell(r.id ?: r.uid, 0, "uid")
+        b << cell(r.label, 1, "label")
+        b << cell(localNameForRow(r), 1, "localName")
+        b << cell(r.ip, 2, "ip")
+        b << cell(curatedLastSeen(r), 3, "lastSeen")
         b << cell(r.groupName, 4)
         String productDisplay = r.productName ?: r.productIdentifier ?: (r.lanProduct ? "LAN product ${r.lanProduct}" : "")
         b << cell(productDisplay, 5)
+        b << cell(r.firmwareVersion ?: "")
         b << cell(r.capability ?: cloudCapability(r), 6)
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
         b << cell(r.connected == null ? "" : r.connected, null, "connected")
@@ -2816,8 +2884,9 @@ String cloudTableHtml() {
     StringBuilder b = new StringBuilder()
     b << tableOpenHtml()
     b << "<tr>"
+    Map cloudHeaderKeys = ["UID":"uid", "Label":"label", "IP address":"ip", "Last seen":"lastSeen", "Connected":"connected"]
     ["UID", "Label", "IP address", "Last seen", "Group", "Product", "Capabilities", "Driver mode", "Connected", "Status"].eachWithIndex { h, idx ->
-        b << headerCell(h, idx, h == "Connected" ? "connected" : null)
+        b << headerCell(h, idx, cloudHeaderKeys[h])
     }
     b << "</tr>"
     Map curated = atomicState.curatedRows ?: [:]
@@ -2831,10 +2900,10 @@ String cloudTableHtml() {
         Map d = curated[normaliseCloudId(light.id)] as Map ?: [:]
         Map l = light as Map
         b << "<tr>"
-        b << cell(light.id, 0)
-        b << cell(light.label, 1)
-        b << cell(d.ip ?: "", 2)
-        b << cell(formatDateTime(light.lastSeenCloud), 3)
+        b << cell(light.id, 0, "uid")
+        b << cell(light.label, 1, "label")
+        b << cell(d.ip ?: "", 2, "ip")
+        b << cell(formatDateTime(light.lastSeenCloud), 3, "lastSeen")
         b << cell(light.groupName, 4)
         b << cell(light.productName ?: light.productIdentifier, 5)
         b << cell(capabilityFlags(l), 6)
@@ -2853,8 +2922,9 @@ String lanTableHtml() {
     StringBuilder b = new StringBuilder()
     b << tableOpenHtml()
     b << "<tr>"
+    Map lanHeaderKeys = ["UID":"uid", "Label":"label", "IP address":"ip", "Last seen":"lastSeen", "Expected from cloud":"status"]
     ["UID", "Label", "IP address", "Last seen", "Expected from cloud"].eachWithIndex { h, idx ->
-        b << headerCell(h, idx, h == "Expected from cloud" ? "status" : null)
+        b << headerCell(h, idx, lanHeaderKeys[h])
     }
     b << "</tr>"
     records.values().sort { a, c ->
@@ -2863,10 +2933,10 @@ String lanTableHtml() {
         return compareUid((a as Map).mac, (c as Map).mac)
     }.each { dev ->
         b << "<tr>"
-        b << cell(dev.mac, 0)
-        b << cell(dev.cloudLabel ?: dev.label ?: "", 1)
-        b << cell(dev.ip, 2)
-        b << cell(formatDateTime(dev.lastSeen), 3)
+        b << cell(dev.mac, 0, "uid")
+        b << cell(dev.cloudLabel ?: dev.label ?: "", 1, "label")
+        b << cell(dev.ip, 2, "ip")
+        b << cell(formatDateTime(dev.lastSeen), 3, "lastSeen")
         b << cell(dev.expectedFromCloud == true ? "yes - ${dev.cloudMatchType ?: 'matched'}" : "no", null, "status")
         b << "</tr>"
     }
@@ -3028,38 +3098,34 @@ Boolean truthy(value) {
 }
 
 String tableOpenHtml() {
-    "<table style='width:auto;border-collapse:collapse;font-size:12px;table-layout:fixed;user-select:text'>"
+    "<table style='width:auto;border-collapse:collapse;font-size:12px;table-layout:auto;user-select:text'>"
 }
 
-String fixedColumnStyle(Integer index) {
-    // Right-sized to the actual LIFX curated data: short UIDs/IPs, moderate labels/groups,
-    // product names, longer driver/status text.
-    if (index == 0) return "width:105px;min-width:105px;max-width:105px;"      // UID
-    if (index == 1) return "width:165px;min-width:165px;max-width:165px;"      // Label
-    if (index == 2) return "width:90px;min-width:90px;max-width:90px;"         // IP address
-    if (index == 3) return "width:90px;min-width:90px;max-width:90px;"         // Last seen
-    if (index == 4) return "width:135px;min-width:135px;max-width:135px;"      // Group
-    if (index == 5) return "width:210px;min-width:210px;max-width:210px;"      // Product
-    if (index == 6) return "width:175px;min-width:175px;max-width:175px;"      // Capabilities
-    if (index == 7) return "width:215px;min-width:215px;max-width:215px;"      // Driver mode
-    if (index == 9) return "width:360px;min-width:360px;max-width:360px;"      // Status
+// Each <table> auto-sizes its own columns independently, so the same UID/Label/IP/Last seen
+// columns can otherwise end up a different width in each table depending on what else that
+// table contains, making it hard to visually cross-reference a device between tables. These
+// "identity" columns get a fixed width by semantic key instead, shared across all three tables;
+// everything else stays auto-sized with a wrap cap for anything unexpectedly long.
+String alignedColumnWidth(String key) {
+    if (key == "uid") return "width:105px;min-width:105px;max-width:105px;"
+    if (key == "label") return "width:165px;min-width:165px;max-width:165px;"
+    if (key == "localName") return "width:120px;min-width:120px;max-width:120px;"
+    if (key == "ip") return "width:90px;min-width:90px;max-width:90px;"
+    if (key == "lastSeen") return "width:90px;min-width:90px;max-width:90px;"
     return ""
 }
 
-String fixedColumnStyleByKey(String key) {
-    if (key == "connected") return "width:75px;min-width:75px;max-width:75px;"
-    if (key == "status") return "width:360px;min-width:360px;max-width:360px;"
-    return ""
-}
-
+// Headers are always short, controlled text (unlike cell data, which can be arbitrarily long),
+// so they stay on one line rather than wrapping - this also gives the column a sane minimum
+// width so short data values (e.g. "3.90") don't leave the header squeezed narrower than itself.
 String headerCell(value, Integer index = null, String key = null) {
-    String extra = key ? fixedColumnStyleByKey(key) : (index == null ? "" : fixedColumnStyle(index))
-    "<th style='text-align:left;border:1px solid #ccc;padding:3px;vertical-align:top;user-select:text;${extra}'>${html(value == null ? '' : value.toString())}</th>"
+    String extra = key ? alignedColumnWidth(key) : ""
+    "<th style='text-align:left;border:1px solid #ccc;padding:3px;vertical-align:top;user-select:text;white-space:nowrap;${extra}'>${html(value == null ? '' : value.toString())}</th>"
 }
 
 String cell(value, Integer index = null, String key = null) {
-    String extra = key ? fixedColumnStyleByKey(key) : (index == null ? "" : fixedColumnStyle(index))
-    "<td style='border:1px solid #ccc;padding:3px;vertical-align:top;overflow:visible;text-overflow:clip;white-space:normal;user-select:text;${extra}'>${html(value == null ? '' : value.toString())}</td>"
+    String extra = key ? alignedColumnWidth(key) : ""
+    "<td style='border:1px solid #ccc;padding:3px;vertical-align:top;overflow:visible;text-overflow:clip;white-space:normal;word-break:break-word;max-width:400px;user-select:text;${extra}'>${html(value == null ? '' : value.toString())}</td>"
 }
 
 String html(String s) {
