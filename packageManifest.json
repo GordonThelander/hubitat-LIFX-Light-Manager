@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-07-18",
-  "releaseNotes": "1.4.1: fixes the actual root cause of unreliable discovery - Hubitat's own outbound command rate limit was being exceeded, seen directly as hub-side 'pending hub commands' errors - by removing a redundant per-device LAN naming chain for cloud-matched devices, pacing the LAN sweep far more conservatively, and leaning much harder on cheap broadcast discovery before falling back to the expensive per-address sweep. Fixes Clear all Data not resetting leftover result banners. Fixes the saved-row removal list being able to show a just-removed row. Fixes the Device preparation table's Local name column reading a stale cached snapshot instead of the live installed child device's name. Removes the Local name column from the Cloud source table (Cloud never has this data). The Advanced section now starts hidden on every visit rather than staying open once toggled, and the optional child status polling controls have moved under Advanced to simplify the default view. Bolded section headings for readability.",
+  "releaseNotes": "1.4.2: fixes the LIFX Master Switch so level is a genuinely independent setting - Set Color and Set Master Color Temperature no longer change brightness as a side effect, whether from a stale/unedited colour-map level field or from a colour-mode leak where a light in CT/white mode had its old cached hue/saturation replayed on every brightness change, pulling it back to a stale colour. Fixes a noisy but harmless cast exception when the colour/level Duration field is left blank. Renames the Master Switch's 'Apply Default Colour Temperature' command to 'Apply Default', which now also applies the configured default level alongside the default colour temperature. 1.4.1: fixes the actual root cause of unreliable discovery - Hubitat's own outbound command rate limit was being exceeded, seen directly as hub-side 'pending hub commands' errors - by removing a redundant per-device LAN naming chain for cloud-matched devices, pacing the LAN sweep far more conservatively, and leaning much harder on cheap broadcast discovery before falling back to the expensive per-address sweep. Fixes Clear all Data not resetting leftover result banners. Fixes the saved-row removal list being able to show a just-removed row. Fixes the Device preparation table's Local name column reading a stale cached snapshot instead of the live installed child device's name. Removes the Local name column from the Cloud source table (Cloud never has this data). The Advanced section now starts hidden on every visit rather than staying open once toggled, and the optional child status polling controls have moved under Advanced to simplify the default view. Bolded section headings for readability.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.4.1"
+      "version": "1.4.2"
     }
   ],
   "drivers": [
@@ -24,7 +24,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_White_Mono_Driver.groovy",
       "required": true,
-      "version": "1.4.1"
+      "version": "1.4.2"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2002",
@@ -32,7 +32,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Tunable_White_Driver.groovy",
       "required": true,
-      "version": "1.4.1"
+      "version": "1.4.2"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2003",
@@ -40,7 +40,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Colour_Driver.groovy",
       "required": true,
-      "version": "1.4.1"
+      "version": "1.4.2"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2004",
@@ -48,7 +48,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Plus_Colour_Driver.groovy",
       "required": true,
-      "version": "1.4.1"
+      "version": "1.4.2"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af3001",
@@ -56,7 +56,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Master_Switch_Driver.groovy",
       "required": true,
-      "version": "1.4.1"
+      "version": "1.4.2"
     }
   ]
 }

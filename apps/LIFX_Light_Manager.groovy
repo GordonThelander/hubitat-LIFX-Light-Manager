@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.4.1
+ * Version: 1.4.2
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -2185,27 +2185,30 @@ void groupChildSetColor(device, Map colorMap, duration = 0) {
     Map cmap = colorMap ?: [:]
     Integer hue100 = clampInt(safeInt(cmap.hue) ?: 0, 0, 100)
     Integer sat100 = clampInt(safeInt(cmap.saturation) ?: 100, 0, 100)
-    Integer lvl = clampInt(safeInt(cmap.level ?: cmap.brightness) ?: 75, 0, 100)
+    // Level is an independent setting controlled via setLevel() - colour commands preserve the
+    // Master Switch's current level rather than accepting their own, since a colour-map input's
+    // level field is easy to submit stale/unedited and shouldn't be able to silently change
+    // brightness as a side effect of a colour change.
+    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, 0, 100)
     Integer requestedKelvin = safeInt(cmap.colorTemperature ?: cmap.kelvin) ?: 3500
     Integer dur = durationMs(cmap.duration ?: duration ?: 0)
     sendBulkSetColorOrLevel(hue100, sat100, lvl, requestedKelvin, dur)
     try {
         device.sendEvent(name: "hue", value: hue100)
         device.sendEvent(name: "saturation", value: sat100)
-        device.sendEvent(name: "level", value: lvl)
         device.sendEvent(name: "colorTemperature", value: requestedKelvin)
         device.sendEvent(name: "colorMode", value: "RGB")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "groupChildSetColor() sendEvent failed: ${t.message}" }
 }
 
-void groupChildSetColorTemperature(device, temperature = 3000, level = 75, duration = 0) {
+void groupChildSetColorTemperature(device, temperature = 3000, duration = 0) {
     Integer kelvin = clampInt(safeInt(temperature) ?: 3000, 1500, 9000)
-    Integer lvl = clampInt(safeInt(level) ?: 75, 0, 100)
+    // Same principle as groupChildSetColor(): level is independent, preserved from current state.
+    Integer lvl = clampInt(safeInt(device.currentValue('level')) ?: 75, 0, 100)
     sendBulkSetColorTemperature(kelvin, lvl, durationMs(duration))
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
-        device.sendEvent(name: "level", value: lvl)
         device.sendEvent(name: "colorMode", value: "CT")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "groupChildSetColorTemperature() sendEvent failed: ${t.message}" }
@@ -2271,7 +2274,10 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
         Integer kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
         Integer hue = 0
         Integer sat = 0
-        if (rowIsColourCapable(row)) {
+        // Only replay the cached colour if the light is actually showing it right now (colorMode
+        // RGB). If it's in CT/white mode, sending its stale leftover hue/saturation here would drag
+        // it back to that old colour as a side effect of a pure brightness change.
+        if (rowIsColourCapable(row) && (child?.currentValue('colorMode') ?: '').toString() == 'RGB') {
             hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
             sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
         }
@@ -2349,6 +2355,8 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
             try {
                 child.sendEvent(name: "colorTemperature", value: clampKelvin(row as Map, kelvin ?: 3000))
                 child.sendEvent(name: "level", value: lvl)
+                child.sendEvent(name: "hue", value: 0)
+                child.sendEvent(name: "saturation", value: 0)
                 child.sendEvent(name: "colorMode", value: "CT")
                 child.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
             } catch (Throwable t) { log.debug "sendBulkSetColorTemperature() child sendEvent failed: ${t.message}" }
@@ -2418,8 +2426,12 @@ void childSetLevel(device, value, duration = 0) {
     Integer level = clampInt(safeInt(value) ?: 0, 0, 100)
     Map row = rowForChild(device)
     Integer kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
-    Integer hue = scalePercentToLifx(device.currentValue('hue') ?: 0)
-    Integer sat = scalePercentToLifx(device.currentValue('saturation') ?: 0)
+    // Only replay the cached colour if the light is actually showing it right now (colorMode RGB) -
+    // otherwise a stale leftover hue/saturation would drag a CT/white light back to an old colour as
+    // a side effect of a pure brightness change.
+    Boolean isRgb = (device.currentValue('colorMode') ?: '').toString() == 'RGB'
+    Integer hue = isRgb ? scalePercentToLifx(device.currentValue('hue') ?: 0) : 0
+    Integer sat = isRgb ? scalePercentToLifx(device.currentValue('saturation') ?: 0) : 0
     Integer bri = scalePercentToLifx(level)
     sendSetColor(row, hue, sat, bri, kelvin, durationMs(duration))
     try {
@@ -2437,6 +2449,8 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "level", value: lvl)
+        device.sendEvent(name: "hue", value: 0)
+        device.sendEvent(name: "saturation", value: 0)
         device.sendEvent(name: "colorMode", value: "CT")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "childSetColorTemperature() sendEvent failed: ${t.message}" }
@@ -2626,6 +2640,7 @@ Integer scaleDown100(value) {
 }
 
 Integer durationMs(value) {
+    if (value == null) return 0
     try { return Math.max(0, Math.round((value as BigDecimal) * 1000.0d) as Integer) } catch (Throwable t) { log.debug "durationMs() failed: ${t.message}"; return 0 }
 }
 
