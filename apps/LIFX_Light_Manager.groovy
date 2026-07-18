@@ -2275,17 +2275,28 @@ void groupChildRefresh(device) {
     } catch (Throwable t) { log.debug "groupChildRefresh() sendEvent failed: ${t.message}" }
 }
 
+// Shared HSBK/power payload builders - both the individual child-device and Master Switch bulk
+// command paths build these same LIFX packet payload shapes, so they're factored out here rather
+// than duplicated inline at every call site.
+List<Integer> buildHsbkPayload(Integer hue, Integer saturation, Integer brightness, Integer kelvin, Integer durationMs = 0) {
+    return [0] + u16le(hue ?: 0) + u16le(saturation ?: 0) + u16le(brightness ?: 0) + u16le(kelvin ?: 0) + u32le(durationMs ?: 0)
+}
+
+List<Integer> buildSetPowerPayload(Integer power, Integer durationMs = 0) {
+    return u16le(power ?: 0) + u32le(durationMs ?: 0)
+}
+
 String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
     // Exposed for child drivers so individual child on/off can mirror the original Rob Heyes dispatch pattern:
     // driver calls parent to build the lightweight zero-target packet, then the driver sends one UDP packet
     // directly to its stored IP with ignoreResponse=true.
-    return buildLifxPacketForTarget(LIFX_MSG.LIGHT_SET_POWER, u16le(power ?: 0) + u32le(durationMs ?: 0), "", true, false, false)
+    return buildLifxPacketForTarget(LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(power, durationMs), "", true, false, false)
 }
 
 void sendBulkSetPower(Integer power, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
-    List<Integer> payload = u16le(power ?: 0) + u32le(durationMs ?: 0)
+    List<Integer> payload = buildSetPowerPayload(power, durationMs)
 
     // v4.7.3: app/fast-group power switching uses the original Rob Heyes style fast path:
     // one IP-directed, zero-target/tagged SET_POWER packet per light, no ACK,
@@ -2326,7 +2337,7 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
             hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
             sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
         }
-        List<Integer> payload = [0] + u16le(hue) + u16le(sat) + u16le(brightness) + u16le(kelvin) + u32le(durationMs ?: 0)
+        List<Integer> payload = buildHsbkPayload(hue, sat, brightness, kelvin, durationMs)
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
         if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
@@ -2347,7 +2358,7 @@ private void sendPowerOnIfNeeded(Map row, child, Integer durationMs = 0) {
     // requires an explicit power-on packet whenever the light isn't already known to be on.
     try {
         if ((child?.currentValue('switch') ?: 'off') != 'on') {
-            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, u16le(LIFX_FULL_ON) + u32le(durationMs ?: 0))
+            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_ON, durationMs))
         }
     } catch (Throwable t) { log.debug "sendPowerOnIfNeeded() failed: ${t.message}" }
 }
@@ -2373,10 +2384,10 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3500)
         List<Integer> payload
         if (rowIsColourCapable(row)) {
-            payload = [0] + u16le(scalePercentToLifx(hue100)) + u16le(scalePercentToLifx(sat100)) + u16le(brightness) + u16le(safeKelvin) + u32le(durationMs ?: 0)
+            payload = buildHsbkPayload(scalePercentToLifx(hue100), scalePercentToLifx(sat100), brightness, safeKelvin, durationMs)
         } else {
             // Non-colour-capable lights receive only the requested brightness level.
-            payload = [0] + u16le(0) + u16le(0) + u16le(brightness) + u16le(safeKelvin) + u32le(durationMs ?: 0)
+            payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
         }
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
         if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
@@ -2406,7 +2417,7 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3000)
-        List<Integer> payload = [0] + u16le(0) + u16le(0) + u16le(brightness) + u16le(safeKelvin) + u32le(durationMs ?: 0)
+        List<Integer> payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
         if (lvl > 0) sendPowerOnIfNeeded(row, child, durationMs)
     }
@@ -2498,7 +2509,7 @@ void childSetLevel(device, value, duration = 0) {
     sendSetColor(row, hue, sat, bri, kelvin, durMs)
     // LIFX tracks power separately from brightness, so setLevel() alone won't wake a bulb that's
     // physically off - send an explicit power-on to match standard SwitchLevel/Hue-style behaviour.
-    if (level > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, LIFX_FULL_ON, durMs)
+    if (level > 0) sendPowerOnIfNeeded(row, device, durMs)
     try {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
@@ -2513,7 +2524,7 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
     Integer durMs = durationMs(duration)
     sendSetColor(row, 0, 0, scalePercentToLifx(lvl), kelvin, durMs)
     // Colour-temperature commands should wake the bulb, matching Hue-style rule behaviour.
-    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, LIFX_FULL_ON, durMs)
+    if (lvl > 0) sendPowerOnIfNeeded(row, device, durMs)
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "level", value: lvl)
@@ -2535,7 +2546,7 @@ void childSetColor(device, Map colorMap, duration = 0) {
     sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durMs)
     // Colour commands should wake the bulb, matching Hue-style rule behaviour - LIFX tracks power
     // separately from colour, so a colour-only packet won't turn on a bulb that's physically off.
-    if (lvl > 0 && (device.currentValue('switch') ?: 'off') != 'on') sendSetPower(row, LIFX_FULL_ON, durMs)
+    if (lvl > 0) sendPowerOnIfNeeded(row, device, durMs)
     try {
         device.sendEvent(name: "hue", value: hue100)
         device.sendEvent(name: "saturation", value: sat100)
@@ -2587,12 +2598,11 @@ void sendSetPower(Map row, Integer power, Integer durationMs = 0) {
     // v4.7.1: same fast packet path as the aggregate group. This matters when a
     // Hubitat group calls every child on/off individually; each child now emits
     // one lightweight UDP packet instead of a multi-candidate ACK command.
-    sendFastUdpToIp(row, LIFX_MSG.LIGHT_SET_POWER, u16le(power ?: 0) + u32le(durationMs ?: 0))
+    sendFastUdpToIp(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(power, durationMs))
 }
 
 void sendSetColor(Map row, Integer hue, Integer saturation, Integer brightness, Integer kelvin, Integer durationMs = 0) {
-    // lifxlan reference payload: reserved uint8 + HSBK uint16[4] + duration uint32
-    List<Integer> payload = [0] + u16le(hue ?: 0) + u16le(saturation ?: 0) + u16le(brightness ?: 0) + u16le(clampKelvin(row, kelvin ?: 3500)) + u32le(durationMs ?: 0)
+    List<Integer> payload = buildHsbkPayload(hue, saturation, brightness, clampKelvin(row, kelvin ?: 3500), durationMs)
     sendLifxToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload, true, false, "parseChildLifx", 1, 0) // ack requested
 }
 
