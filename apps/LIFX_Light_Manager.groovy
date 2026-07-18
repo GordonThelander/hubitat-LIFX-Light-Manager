@@ -2476,6 +2476,18 @@ Boolean rowIsColourCapable(Map row) {
         mode.contains('colour +') || mode.contains('color +')
 }
 
+// True for anything that can actually show a colour temperature (colour bulbs and Tunable White),
+// false only for pure Mono White, which declares no ColorTemperature attribute/capability.
+Boolean rowSupportsColorTemperature(Map row) {
+    if (!row) return false
+    if (rowIsColourCapable(row)) return true
+    String driver = (row.childDriver ?: driverTypeForRow(row)).toString().toLowerCase()
+    String cap = (row.capability ?: '').toString().toLowerCase()
+    String mode = (row.driverMode ?: '').toString().toLowerCase()
+    return driver.contains('tunable') || cap.contains('colour temperature') || cap.contains('color temperature') ||
+        mode.contains('colour temperature') || mode.contains('color temperature')
+}
+
 void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Integer kelvin, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
@@ -2527,11 +2539,16 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
         def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
-                child.sendEvent(name: "colorTemperature", value: clampKelvin(row as Map, kelvin ?: 3000))
+                // Mono White devices declare no ColorTemperature attribute/capability, so only
+                // emit CT-related events to rows that actually support it - level/switch apply to
+                // every device type regardless.
+                if (rowSupportsColorTemperature(row as Map)) {
+                    child.sendEvent(name: "colorTemperature", value: clampKelvin(row as Map, kelvin ?: 3000))
+                    child.sendEvent(name: "hue", value: 0)
+                    child.sendEvent(name: "saturation", value: 0)
+                    child.sendEvent(name: "colorMode", value: "CT")
+                }
                 child.sendEvent(name: "level", value: lvl)
-                child.sendEvent(name: "hue", value: 0)
-                child.sendEvent(name: "saturation", value: 0)
-                child.sendEvent(name: "colorMode", value: "CT")
                 child.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
             } catch (Throwable t) { log.debug "sendBulkSetColorTemperature() child sendEvent failed: ${t.message}" }
         }
