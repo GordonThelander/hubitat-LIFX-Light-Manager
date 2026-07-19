@@ -3098,6 +3098,17 @@ Map findCuratedMatchForLanUid(String lanUid, Map cloud) {
     String lan = normalisedUid(lanUid)
     if (!lan || !cloud) return null
 
+    // 0. A row already matched before has its confirmed lanUid persisted (see the parseLifx()
+    // write-back) - prefer that over re-deriving a match every time. Re-deriving via the adjacent-
+    // UID heuristic below becomes ambiguous, and therefore fails, once a fleet has enough devices
+    // that more than one cloud UID happens to be +-1 of a given LAN MAC - which is close to
+    // guaranteed once a household has a handful of LIFX bulbs bought in the same batch with
+    // sequential MACs. This was silently wiping a previously-confirmed device's LAN data on every
+    // later Discovery run whenever that ambiguity occurred, regardless of the device's own
+    // reachability.
+    Map learned = cloud.find { k, v -> normalisedUid((v as Map)?.lanUid) == lan }?.value as Map
+    if (learned) return [cloudId: normalisedUid(learned.id ?: learned.uid ?: lan), curated: learned, matchType: "learned"]
+
     // 1. Exact match wins.
     Map exact = cloud[lan] as Map
     if (exact) return [cloudId: lan, curated: exact, matchType: "exact"]
