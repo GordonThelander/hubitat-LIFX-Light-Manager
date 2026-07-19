@@ -1,8 +1,8 @@
 /*
- * LIFX Master Switch
+ * LIFX Master Switch (Dev)
  * Namespace: Hubitat Integrations
  * Version: 1.5.2
- * Parent app: LIFX Light Manager 1.5.2+
+ * Parent app: LIFX Light Manager (Dev) 1.5.2+
  *
  * Purpose:
  * - Aggregate master switch used for fast whole-fleet LAN control.
@@ -13,7 +13,7 @@
  *   bulbs that actually support it, so they simply receive the requested brightness/kelvin.
  */
 metadata {
-    definition(name: "LIFX Master Switch", namespace: "Hubitat Integrations", author: "Gordon Thelander") {
+    definition(name: "LIFX Master Switch (Dev)", namespace: "Hubitat Integrations", author: "Gordon Thelander") {
         capability "Actuator"
         capability "Switch"
         capability "Light"

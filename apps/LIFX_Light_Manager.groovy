@@ -1,7 +1,11 @@
 /*
- * LIFX Light Manager
+ * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
  * Version: 1.5.2
+ *
+ * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
+ * freely alongside the production "LIFX Light Manager" app on the same hub, against
+ * the same physical bulbs, without touching production child devices or automations.
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -22,7 +26,7 @@
 import groovy.transform.Field
 
 definition(
-    name: "LIFX Light Manager",
+    name: "LIFX Light Manager (Dev)",
     namespace: "Hubitat Integrations",
     author: "Gordon Thelander",
     description: "Maintains a saved LIFX device table from Cloud data and updates LAN IPs separately by UID matching.",
@@ -35,7 +39,7 @@ definition(
 )
 
 preferences {
-    page(name: "mainPage", title: "LIFX Light Manager", install: true, uninstall: true)
+    page(name: "mainPage", title: "LIFX Light Manager (Dev)", install: true, uninstall: true)
 }
 
 // ---------------- Constants ----------------
@@ -1830,7 +1834,7 @@ List<String> controlUidCandidatesForRow(Map row) {
 
 String childDniForRow(Map row) {
     String uid = lanUidForRow(row)
-    return uid ? "lifx-curated-${uid}".toString() : ""
+    return uid ? "lifxdev-curated-${uid}".toString() : ""
 }
 
 String removeRowButtonName(String uidValue) {
@@ -1901,20 +1905,20 @@ String driverTypeForRow(Map row) {
     // v4.7.7: IR capability is authoritative. Any IR-capable light must use the
     // Plus driver so the infrared management command/attributes are available.
     Boolean ir = truthy(row.hasIr) || cap.contains("infrared") || cap.contains(" ir") || cap.endsWith("ir") || mode.endsWith("ir") || mode.contains("+ ir") || mode.contains("infrared")
-    if (ir) return "LIFX Local Plus Colour"
+    if (ir) return "LIFX Local Plus Colour (Dev)"
 
     // Product ID is the strongest local signal after explicit IR capability.
-    if (lanProduct in [10,11,18,19,51,61,66,82,85,87,88,100,101]) return "LIFX Local White Mono"
-    if (lanProduct in [39,50,60,81,96]) return "LIFX Local Tunable White"
-    if (lanProduct in [29,30,45,46,64,65,109,110,111]) return "LIFX Local Plus Colour"
-    if (lanProduct in [1,3,20,22,27,28,36,37,40,43,44,49,52,57,59,62,63,68,91,92,93,94,97,98,99,112,130,182]) return "LIFX Local Colour"
+    if (lanProduct in [10,11,18,19,51,61,66,82,85,87,88,100,101]) return "LIFX Local White Mono (Dev)"
+    if (lanProduct in [39,50,60,81,96]) return "LIFX Local Tunable White (Dev)"
+    if (lanProduct in [29,30,45,46,64,65,109,110,111]) return "LIFX Local Plus Colour (Dev)"
+    if (lanProduct in [1,3,20,22,27,28,36,37,40,43,44,49,52,57,59,62,63,68,91,92,93,94,97,98,99,112,130,182]) return "LIFX Local Colour (Dev)"
 
     // Product family is the next strongest signal. This prevents CT-only wording being
     // mistaken for RGB colour support.
     Boolean productTunableWhite = product.contains("day and dusk") || product.contains("white to warm") || product.contains("warm to white")
     Boolean productWhiteMono = product.contains("mini white") || product.contains("filament") || product.contains("white mono") || product.contains("white 800") || product.contains("white 900")
-    if (productWhiteMono) return "LIFX Local White Mono"
-    if (productTunableWhite) return "LIFX Local Tunable White"
+    if (productWhiteMono) return "LIFX Local White Mono (Dev)"
+    if (productTunableWhite) return "LIFX Local Tunable White (Dev)"
 
     Boolean hasRealColour = truthy(row.hasColor) ||
         cap.contains("colour light") || cap.contains("color light") ||
@@ -1930,10 +1934,10 @@ String driverTypeForRow(Map row) {
         mode.contains("colour temperature") || mode.contains("color temperature") ||
         mode.contains("+ ct")
 
-    if (hasRealColour && ir) return "LIFX Local Plus Colour"
-    if (hasRealColour) return "LIFX Local Colour"
-    if (ctOnly) return "LIFX Local Tunable White"
-    return "LIFX Local White Mono"
+    if (hasRealColour && ir) return "LIFX Local Plus Colour (Dev)"
+    if (hasRealColour) return "LIFX Local Colour (Dev)"
+    if (ctOnly) return "LIFX Local Tunable White (Dev)"
+    return "LIFX Local White Mono (Dev)"
 }
 
 
@@ -2175,7 +2179,7 @@ void syncChildRuntimeAttributes(child, Map row, String driverType = "") {
 // ---------------- Fast aggregate / bulk control ----------------
 
 String fastGroupDni() {
-    return "lifx-master-switch"
+    return "lifxdev-master-switch"
 }
 
 String fastGroupLabel() {
@@ -2186,14 +2190,14 @@ String fastGroupLabel() {
 void createOrUpdateFastGroupChildDevice() {
     String dni = fastGroupDni()
     String label = fastGroupLabel()
-    String driverType = "LIFX Master Switch"
+    String driverType = "LIFX Master Switch (Dev)"
     try {
         def existing = getChildDevice(dni)
         if (existing) {
             try { existing.setLabel(label) } catch (Throwable t) { log.debug "existing.setLabel(...) failed: ${t.message}" }
             try { existing.updateDataValue("driverType", driverType) } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
             try { existing.updateDataValue("groupMode", "fast-bulk") } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
-            try { existing.updateDataValue("managedBy", "LIFX Light Manager") } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
+            try { existing.updateDataValue("managedBy", "LIFX Light Manager (Dev)") } catch (Throwable t) { log.debug "existing.updateDataValue(...) failed: ${t.message}" }
             refreshMasterSwitchMembership(existing)
             atomicState.childCreateResult = "Updated LIFX MASTER SWITCH device: ${html(label)}"
             return
@@ -2206,13 +2210,13 @@ void createOrUpdateFastGroupChildDevice() {
                 label: label,
                 name: driverType,
                 isComponent: false,
-                data: [driverType: driverType, groupMode: "fast-bulk", managedBy: "LIFX Light Manager"]
+                data: [driverType: driverType, groupMode: "fast-bulk", managedBy: "LIFX Light Manager (Dev)"]
             ]
         )
         refreshMasterSwitchMembership()
         atomicState.childCreateResult = "Created LIFX MASTER SWITCH device: ${html(label)}"
     } catch (com.hubitat.app.exception.UnknownDeviceTypeException e) {
-        atomicState.childCreateResult = "LIFX Master Switch driver is not installed: ${html(driverType)}"
+        atomicState.childCreateResult = "LIFX Master Switch (Dev) driver is not installed: ${html(driverType)}"
     } catch (Throwable t) {
         atomicState.childCreateResult = "Failed to create LIFX MASTER SWITCH: ${html(safeMessage(t.message))}"
     }
@@ -2220,10 +2224,10 @@ void createOrUpdateFastGroupChildDevice() {
 
 List<String> managedLifxDriverNames() {
     return [
-        "LIFX Local White Mono",
-        "LIFX Local Tunable White",
-        "LIFX Local Colour",
-        "LIFX Local Plus Colour"
+        "LIFX Local White Mono (Dev)",
+        "LIFX Local Tunable White (Dev)",
+        "LIFX Local Colour (Dev)",
+        "LIFX Local Plus Colour (Dev)"
     ]
 }
 

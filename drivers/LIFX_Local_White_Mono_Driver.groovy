@@ -1,15 +1,15 @@
 /*
- * LIFX Local White Mono
+ * LIFX Local White Mono (Dev)
  * Namespace: Hubitat Integrations
  * Version: 1.5.2
- * Parent app: LIFX Light Manager 1.5.2+
+ * Parent app: LIFX Light Manager (Dev) 1.5.2+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
  * LAN command handling is delegated to the parent app, which follows the lifxlan packet/workflow model.
  */
 metadata {
-    definition(name: "LIFX Local White Mono", namespace: "Hubitat Integrations", author: "Gordon Thelander") {
+    definition(name: "LIFX Local White Mono (Dev)", namespace: "Hubitat Integrations", author: "Gordon Thelander") {
         capability "Actuator"
         capability "Switch"
         capability "Light"
