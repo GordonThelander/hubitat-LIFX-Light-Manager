@@ -1164,7 +1164,24 @@ def parseLifx(response) {
             Map fw = parseFirmwarePayload(parsed.payloadHex)
             if (c) {
                 c.firmwareVersion = fw.version ?: c.firmwareVersion
+                c.firmwareBuild = fw.build ?: c.firmwareBuild
                 c.firmwareCheckedAt = now()
+                // Every driver already declares hostFirmware/hostFirmwareBuild attributes and
+                // reads them back from device data on initialize() - only this write-back was
+                // missing, leaving those fields permanently blank on the installed device.
+                def firmwareChild = getChildDevice(childDniForRow(c))
+                if (firmwareChild) {
+                    try {
+                        if (fw.version) {
+                            firmwareChild.updateDataValue('hostFirmware', fw.version.toString())
+                            firmwareChild.sendEvent(name: 'hostFirmware', value: fw.version)
+                        }
+                        if (fw.build) {
+                            firmwareChild.updateDataValue('hostFirmwareBuild', fw.build.toString())
+                            firmwareChild.sendEvent(name: 'hostFirmwareBuild', value: fw.build.toString())
+                        }
+                    } catch (Throwable t) { log.debug "firmware child data update failed: ${t.message}" }
+                }
             }
             break
         case LIFX_MSG.STATE_GROUP:
