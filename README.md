@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.1
+**Version:** 1.5.2
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -19,6 +19,9 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports Master Switch colour and colour-temperature control, applying colour to colour-capable lights and level-only changes to non-colour lights.
 - Supports optional lightweight LAN polling of installed child devices.
 - Supports an on-demand firmware version check over LAN for every saved device, including ones not yet installed as child devices.
+- Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table.
+- Supports optional hourly background maintenance (Discovery, firmware check, WiFi signal check) so the device table stays current without opening the app.
+- Supports native LIFX **Breathe** and **Pulse** colour effects as Rule Machine Custom Actions, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) below.
 - Driver format compatibility with Google Home that exposes device capabilities (known issue that colour has to be set once outside of Goole Home and then to use Google to change the colour manually to lock in the RGB capability)  
 
 ## Components
@@ -94,6 +97,28 @@ Colour-capable lights receive colour commands. Non-colour lights receive level-o
 
 The Master Switch exposes `Light`, `ColorControl` and `ColorTemperature` capabilities, so sharing it with Google Home makes it appear there as a full colour light, the same as the individual colour-capable bulb drivers. Confirmed working with Google Home.
 
+## Breathe / Pulse colour effects
+
+Colour-capable local drivers (Colour, Plus Colour) and the Master Switch expose two native LIFX LAN effects as custom commands, for use as a Rule Machine **Custom Action**:
+
+```text
+breathe(baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness)
+pulse(baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness)
+```
+
+- **Breathe** is a smooth sine-wave fade between the two colours. **Pulse** is a sharp on/off-style switch between them. Same parameters, different waveform shape.
+- Only `baseColour` and `targetColour` are required. `speedSeconds`, `baseBrightness` and `targetBrightness` are optional and can be left blank.
+- Valid colour names (case-insensitive): `Soft White`, `White`, `Daylight`, `Warm White`, `Red`, `Orange`, `Yellow`, `Green`, `Blue`, `Purple`, `Pink`. An unrecognised name falls back to White.
+- `speedSeconds` is a plain number of seconds (e.g. `6`). Blank defaults to 3.5s for Breathe, 0.8s for Pulse.
+- `baseBrightness`/`targetBrightness` are 0-100 (%). Blank defaults to 100 (full brightness).
+- The effect runs until interrupted by a later command (`setColor`, `on`, `off`, etc.) sent to the same device, not for a fixed duration. Interrupting only takes effect once the current cycle finishes, so it can lag by up to one `speedSeconds` period, plan rule timing (delays, "Off" actions) accordingly.
+- Wide hue swings between very different fully-saturated colours (e.g. Green to Red) can look choppy rather than smooth, this is the bulb's own colour interpolation, not a bug. Narrower hue gaps or saturation-based pairs (e.g. White to Blue) fade more gently.
+- Sent to the Master Switch, the effect only reaches colour-capable bulbs in the fleet; Mono White and Tunable White bulbs have no physical way to render a hue and are skipped.
+
+**Rule Machine parameters are positional, not named.** When building the Custom Action, Rule Machine passes whatever you type into parameter slot 1, 2, 3... as arguments 1, 2, 3... in that same order, it does not read the parameter's label to figure out what a value means. The order must match exactly: Base colour, Target colour, Speed, Base brightness, Target brightness. Get the order wrong (e.g. brightness before speed) and values get silently misinterpreted with no error.
+
+Also: for each parameter, Rule Machine's "parameter type" dropdown must be set to **string**, not "number". A NUMBER-type parameter on a custom command triggers Rule Machine's "Meter" behaviour, which re-invokes the command repeatedly at that interval instead of passing it as a one-time value, breaking Breathe's continuous fade. All five parameters here are declared as STRING specifically to avoid this.
+
 ## IP address change remediation
 
 When discovery finds a different IP address for an already-created child device, the app marks that device for update with:
@@ -108,13 +133,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.1 |
-| App | 1.5.1 |
-| White Mono driver | 1.5.1 |
-| Tunable White driver | 1.5.1 |
-| Colour driver | 1.5.1 |
-| Plus Colour driver | 1.5.1 |
-| Master Switch driver | 1.5.1 |
+| Package | 1.5.2 |
+| App | 1.5.2 |
+| White Mono driver | 1.5.2 |
+| Tunable White driver | 1.5.2 |
+| Colour driver | 1.5.2 |
+| Plus Colour driver | 1.5.2 |
+| Master Switch driver | 1.5.2 |
 
 ## Known limitations
 
@@ -128,6 +153,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.2:** Adds native LIFX Breathe and Pulse colour effects as Rule Machine Custom Actions on colour-capable bulbs and the Master Switch, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) above for full details.
 
 **1.5.1:** Adds an on-demand WiFi signal strength check (under Advanced) that queries every saved device over LAN and adds a WiFi Signal column to the device preparation table, shown in dBm. Adds optional hourly background maintenance (on by default) that runs Discovery, Firmware check and WiFi signal check automatically on a staggered schedule (:00, :15 and :30 past each hour), so the device table stays current without needing to open the app.
 

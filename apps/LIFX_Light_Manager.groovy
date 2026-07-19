@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.5.1
+ * Version: 1.5.2
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -45,7 +45,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.1"
+@Field static final String APP_VERSION = "1.5.2"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -55,9 +55,45 @@ preferences {
     GET_WIFI_INFO: 16, STATE_WIFI_INFO: 17,
     GET_GROUP: 51, STATE_GROUP: 53, GET_LOCATION: 48, STATE_LOCATION: 50,
     GET_LABEL: 23, STATE_LABEL: 25, ACK: 45,
-    LIGHT_GET: 101, LIGHT_SET_COLOR: 102, LIGHT_STATE: 107,
+    LIGHT_GET: 101, LIGHT_SET_COLOR: 102, LIGHT_SET_WAVEFORM: 103, LIGHT_STATE: 107,
     LIGHT_GET_POWER: 116, LIGHT_SET_POWER: 117, LIGHT_STATE_POWER: 118,
     LIGHT_GET_INFRARED: 120, LIGHT_STATE_INFRARED: 121, LIGHT_SET_INFRARED: 122
+].asImmutable()
+
+// Breathe/Pulse waveform shapes (LIFX LAN protocol SetWaveform "waveform" byte).
+@Field static final Integer WAVEFORM_SINE = 1
+@Field static final Integer WAVEFORM_PULSE = 4
+// No true "run forever" value exists in the protocol - a very large cycle count is used instead,
+// since these effects are only ever expected to be stopped by a later rule action (a plain
+// setColor/on/off), not by naturally exhausting their cycle count.
+@Field static final Float WAVEFORM_INDEFINITE_CYCLES = 1000000.0f
+// Default periods, used when the optional speed parameter is left blank. Rule Machine's Custom
+// Action has no way to pass a plain literal NUMBER to a custom command - its only mechanism for a
+// NUMBER parameter ("Meter") re-invokes the command repeatedly at that interval instead of
+// calling it once with that value, which breaks Breathe's continuous fade (each re-invocation
+// snaps back to the base colour and restarts it). STRING parameters don't have this problem
+// (confirmed live), so the speed override is typed as a plain number of seconds in a STRING field.
+@Field static final Integer BREATHE_PERIOD_MS = 3500
+@Field static final Integer PULSE_PERIOD_MS = 800
+
+// Named colour presets for Breathe/Pulse base/target colours, passed as plain ENUM command
+// parameters (each rule picks its own pair directly) rather than read from a shared device -
+// ENUM/String parameters don't have the NUMBER "Meter" problem above, so this is a reliable,
+// per-rule-configurable Custom Action input instead of a global setting. Names and values match
+// Rule Machine's own "Set Color" preset list. [hue100, saturation100, kelvin] - kelvin only
+// matters when saturation is 0.
+@Field static final Map<String, List<Integer>> NAMED_COLORS = [
+    "Soft White": [0, 0, 2700],
+    "White": [0, 0, 4000],
+    "Daylight": [0, 0, 6500],
+    "Warm White": [0, 0, 2200],
+    "Red": [0, 100, 3500],
+    "Orange": [8, 100, 3500],
+    "Yellow": [17, 100, 3500],
+    "Green": [33, 100, 3500],
+    "Blue": [67, 100, 3500],
+    "Purple": [75, 100, 3500],
+    "Pink": [83, 50, 3500]
 ].asImmutable()
 
 @Field static final Integer LIFX_FULL_ON = 65535
@@ -295,6 +331,9 @@ void renderMainPageContent(Boolean advanced) {
                 submitOnChange: true
             input "applyBackgroundMaintenanceBtn", "button", title: "Apply background maintenance settings", submitOnChange: true
             if (atomicState.backgroundMaintenanceResult) paragraph atomicState.backgroundMaintenanceResult
+        }
+        section("<b>Breathe / Pulse colour effects</b>") {
+            paragraph "Trigger breathe(baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) or pulse(same) as a Custom Action on any colour-capable bulb or the Master Switch - each rule types its own values (Rule Machine has no dropdown support for custom command parameters). Only the first two are required. Valid colour names: Soft White, White, Daylight, Warm White, Red, Orange, Yellow, Green, Blue, Purple, Pink (case-insensitive). Speed is a plain number of seconds (e.g. 6), leave blank for the default (3.5s breathe, 0.8s pulse). Brightness is 0-100%, leave blank for full brightness. Both run until stopped by a later command (setColor/on/off). Wide hue swings (e.g. green to red) can look choppy rather than smooth - narrower hue gaps or saturation-based pairs (e.g. White to Blue) fade more gently."
         }
         section("<b>Remove stale saved rows</b>") {
             paragraph "Rows below have no installed Hubitat child device and can be safely removed from the saved device table - for example, a device deleted from LIFX Cloud. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
@@ -2548,11 +2587,49 @@ void groupChildRefresh(device) {
     } catch (Throwable t) { log.debug "groupChildRefresh() sendEvent failed: ${t.message}" }
 }
 
+private void runColorEffectGroup(String baseColorName, String targetColorName, Integer periodMs, Integer waveform, Integer baseBrightness, Integer targetBrightness) {
+    // Breathe/Pulse are colour effects (hue/saturation, not just brightness) - Mono White and
+    // Tunable White bulbs have no physical way to render a hue at all, so they're excluded here
+    // the same way the Master Switch's other colour commands (setColor/setColorTemperature)
+    // already only send hue/saturation data to bulbs that actually support it.
+    List<Map> rows = bulkControlRows().findAll { rowIsColourCapable(it as Map) }
+    if (!rows) return
+    rows.eachWithIndex { item, idx ->
+        Map row = item as Map
+        def child = getChildDevice(childDniForBulkRow(row))
+        runColorEffect(row, child, baseColorName, targetColorName, periodMs, waveform, baseBrightness, targetBrightness)
+        // Two packets per bulb (colour + waveform) - paced the same as the other bulk-fleet
+        // commands to stay within Hubitat's outbound command rate limit.
+        if (idx < rows.size() - 1) pauseExecution(60)
+    }
+}
+
+void groupChildBreathe(device, baseColorName, targetColorName, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
+    runColorEffectGroup(baseColorName as String, targetColorName as String, resolvePeriodMs(speedSeconds as String, BREATHE_PERIOD_MS), WAVEFORM_SINE,
+        resolveBrightnessPercent(baseBrightness as String), resolveBrightnessPercent(targetBrightness as String))
+}
+
+void groupChildPulse(device, baseColorName, targetColorName, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
+    runColorEffectGroup(baseColorName as String, targetColorName as String, resolvePeriodMs(speedSeconds as String, PULSE_PERIOD_MS), WAVEFORM_PULSE,
+        resolveBrightnessPercent(baseBrightness as String), resolveBrightnessPercent(targetBrightness as String))
+}
+
 // Shared HSBK/power payload builders - both the individual child-device and Master Switch bulk
 // command paths build these same LIFX packet payload shapes, so they're factored out here rather
 // than duplicated inline at every call site.
 List<Integer> buildHsbkPayload(Integer hue, Integer saturation, Integer brightness, Integer kelvin, Integer durationMs = 0) {
     return [0] + u16le(hue ?: 0) + u16le(saturation ?: 0) + u16le(brightness ?: 0) + u16le(kelvin ?: 0) + u32le(durationMs ?: 0)
+}
+
+// SetWaveform payload: reserved(1) + transient(1) + HSBK(8) + period(u32) + cycles(f32) +
+// skew_ratio(i16, 0=symmetric) + waveform(1). transient=1 means the light settles back to
+// whatever it was showing immediately before this packet once the effect naturally finishes -
+// combined with sendSetColor(baseColor) sent right before this, that "before" state is the
+// chosen base colour, so a very large cycle count plus a later interrupting command is how these
+// effects are meant to be stopped, not by exhausting the cycle count.
+List<Integer> buildWaveformPayload(Integer hue, Integer saturation, Integer brightness, Integer kelvin, Integer periodMs, Integer waveform) {
+    return [0, 1] + u16le(hue ?: 0) + u16le(saturation ?: 0) + u16le(brightness ?: 0) + u16le(kelvin ?: 0) +
+        u32le((periodMs ?: 0) as Long) + f32le(WAVEFORM_INDEFINITE_CYCLES) + u16le(0) + [waveform ?: WAVEFORM_SINE]
 }
 
 List<Integer> buildSetPowerPayload(Integer power, Integer durationMs = 0) {
@@ -2882,6 +2959,61 @@ void childSetInfraredLevel(device, value) {
     try { device.sendEvent(name: "IRLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(IRLevel) failed: ${t.message}" }
     try { device.sendEvent(name: "infraredLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(infraredLevel) failed: ${t.message}" }
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
+}
+
+// Resolves a named colour preset (see NAMED_COLORS) to [hue100, saturation100, kelvin] - falls
+// back to White for an unrecognised or blank name rather than failing the whole command. Case-
+// insensitive and trims whitespace, since Rule Machine's Custom Action has no ENUM/dropdown
+// support for custom command parameters (confirmed live - only string/number/decimal are
+// offered), so this value is always typed by hand rather than picked from a list.
+List<Integer> resolveNamedColor(String name) {
+    String key = (name ?: "").toString().trim()
+    return NAMED_COLORS[key] ?: (NAMED_COLORS.find { k, v -> k.equalsIgnoreCase(key) }?.value as List<Integer>) ?: NAMED_COLORS["White"]
+}
+
+// Optional speed override, typed as a plain number of seconds in a STRING field (see the
+// BREATHE_PERIOD_MS comment for why STRING rather than NUMBER). Blank or unparseable falls back
+// to the given default; clamped to a sane range either way.
+Integer resolvePeriodMs(String secondsText, Integer defaultMs) {
+    Integer seconds = safeInt(secondsText)
+    if (seconds == null || seconds <= 0) return defaultMs
+    return clampInt(seconds * 1000, 200, 60000)
+}
+
+// Optional brightness override (0-100%), typed as a plain number in a STRING field for the same
+// reason speed is (see resolvePeriodMs). Blank or unparseable falls back to full brightness.
+Integer resolveBrightnessPercent(String percentText) {
+    Integer pct = safeInt(percentText)
+    if (pct == null) return 100
+    return clampInt(pct, PERCENT_MIN, PERCENT_MAX)
+}
+
+private void runColorEffect(Map row, device, String baseColorName, String targetColorName, Integer periodMs, Integer waveform, Integer baseBrightness, Integer targetBrightness) {
+    if (!row?.ip) {
+        log.debug "runColorEffect: no row/IP for ${device?.displayName} - nothing sent."
+        return
+    }
+    List<Integer> base = resolveNamedColor(baseColorName)
+    List<Integer> target = resolveNamedColor(targetColorName)
+    Integer baseKelvin = clampKelvin(row, base[2])
+    sendSetColor(row, scalePercentToLifx(base[0]), scalePercentToLifx(base[1]), scalePercentToLifx(baseBrightness ?: 100), baseKelvin, 0)
+    if ((baseBrightness ?: 100) > 0) sendPowerOnIfNeeded(row, device, 0)
+    List<Integer> payload = buildWaveformPayload(
+        scalePercentToLifx(target[0]), scalePercentToLifx(target[1]),
+        scalePercentToLifx(targetBrightness ?: 100), clampKelvin(row, target[2]), periodMs, waveform)
+    sendLifxToRow(row, LIFX_MSG.LIGHT_SET_WAVEFORM, payload, false, false, "parseChildLifx", 1, 0)
+}
+
+void childBreathe(device, baseColorName, targetColorName, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
+    Integer periodMs = resolvePeriodMs(speedSeconds as String, BREATHE_PERIOD_MS)
+    runColorEffect(rowForManagedChild(device), device, baseColorName as String, targetColorName as String, periodMs, WAVEFORM_SINE,
+        resolveBrightnessPercent(baseBrightness as String), resolveBrightnessPercent(targetBrightness as String))
+}
+
+void childPulse(device, baseColorName, targetColorName, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
+    Integer periodMs = resolvePeriodMs(speedSeconds as String, PULSE_PERIOD_MS)
+    runColorEffect(rowForManagedChild(device), device, baseColorName as String, targetColorName as String, periodMs, WAVEFORM_PULSE,
+        resolveBrightnessPercent(baseBrightness as String), resolveBrightnessPercent(targetBrightness as String))
 }
 
 void childRefresh(device) {
@@ -3578,6 +3710,7 @@ List<Integer> hexToBytes(String hex) {
 
 List<Integer> u16le(Integer v) { [v & 0xff, (v >> 8) & 0xff] }
 List<Integer> u32le(Long v) { [(v) & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff] as List<Integer> }
+List<Integer> f32le(Float v) { u32le(Float.floatToIntBits(v ?: 0f) as Long) }
 
 Integer leU16(String hex, Integer offset) {
     if (!hex || hex.size() < offset + 4) return 0

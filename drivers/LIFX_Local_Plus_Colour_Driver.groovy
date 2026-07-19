@@ -1,8 +1,8 @@
 /*
  * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: 1.5.1
- * Parent app: LIFX Light Manager 1.5.1+
+ * Version: 1.5.2
+ * Parent app: LIFX Light Manager 1.5.2+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -30,6 +30,12 @@ metadata {
         attribute "infraredLevel", "number"
         command "setInfraredLevel", [[name: "Level", type: "NUMBER"]]
         command "setIRLevel", [[name: "Level", type: "NUMBER"]]
+        // Rule Machine's Custom Action has no ENUM/dropdown support for custom command
+        // parameters (confirmed live) - only string/number/decimal are offered, so these are
+        // typed by hand. Valid names: Soft White, White, Daylight, Warm White, Red, Orange,
+        // Yellow, Green, Blue, Purple, Pink (case-insensitive; unrecognised falls back to White).
+        command "breathe", [[name: "Base colour*", type: "STRING"], [name: "Target colour*", type: "STRING"], [name: "Speed (seconds, optional, default 3.5)", type: "STRING"], [name: "Base brightness % (optional, default 100)", type: "STRING"], [name: "Target brightness % (optional, default 100)", type: "STRING"]]
+        command "pulse", [[name: "Base colour*", type: "STRING"], [name: "Target colour*", type: "STRING"], [name: "Speed (seconds, optional, default 0.8)", type: "STRING"], [name: "Base brightness % (optional, default 100)", type: "STRING"], [name: "Target brightness % (optional, default 100)", type: "STRING"]]
     }
     preferences {
         input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, required: false
@@ -162,6 +168,8 @@ def setColorTemperature(value, level = null, duration = 0) { if (!requireParent(
 def setColor(Map value) { if (!requireParent()) return; parent.childSetColor(device, value ?: [:], value?.duration ?: 0) }
 def setHue(value) { if (!requireParent()) return; parent.childSetHue(device, value) }
 def setSaturation(value) { if (!requireParent()) return; parent.childSetSaturation(device, value) }
+def breathe(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) { if (!requireParent()) return; parent.childBreathe(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) }
+def pulse(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) { if (!requireParent()) return; parent.childPulse(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) }
 
 // infraredLevel/setInfraredLevel and IRLevel/setIRLevel are two names for the same underlying
 // value, kept both for backward compatibility with existing rules/dashboards built against

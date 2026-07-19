@@ -1,8 +1,8 @@
 /*
  * LIFX Master Switch
  * Namespace: Hubitat Integrations
- * Version: 1.5.1
- * Parent app: LIFX Light Manager 1.5.1+
+ * Version: 1.5.2
+ * Parent app: LIFX Light Manager 1.5.2+
  *
  * Purpose:
  * - Aggregate master switch used for fast whole-fleet LAN control.
@@ -29,6 +29,12 @@ metadata {
         attribute "onMemberCount", "number"
         command "applyDefault"
         command "setMasterColorTemperature", [[name: "Colour temperature", type: "NUMBER"]]
+        // Rule Machine's Custom Action has no ENUM/dropdown support for custom command
+        // parameters (confirmed live) - only string/number/decimal are offered, so these are
+        // typed by hand. Valid names: Soft White, White, Daylight, Warm White, Red, Orange,
+        // Yellow, Green, Blue, Purple, Pink (case-insensitive; unrecognised falls back to White).
+        command "breathe", [[name: "Base colour*", type: "STRING"], [name: "Target colour*", type: "STRING"], [name: "Speed (seconds, optional, default 3.5)", type: "STRING"], [name: "Base brightness % (optional, default 100)", type: "STRING"], [name: "Target brightness % (optional, default 100)", type: "STRING"]]
+        command "pulse", [[name: "Base colour*", type: "STRING"], [name: "Target colour*", type: "STRING"], [name: "Speed (seconds, optional, default 0.8)", type: "STRING"], [name: "Base brightness % (optional, default 100)", type: "STRING"], [name: "Target brightness % (optional, default 100)", type: "STRING"]]
     }
     preferences {
         input "defaultColorTemperature", "number", title: "Default colour temperature for Master Switch", defaultValue: 3000, range: "1500..9000", required: true
@@ -91,4 +97,14 @@ def setMasterColorTemperature(temperature) {
 def applyDefault() {
     setLevel(defaultCtLevel ?: 75, 0)
     setColorTemperature(defaultColorTemperature ?: 3000)
+}
+
+def breathe(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
+    if (!requireParent()) return
+    parent.groupChildBreathe(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness)
+}
+
+def pulse(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
+    if (!requireParent()) return
+    parent.groupChildPulse(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness)
 }
