@@ -4,7 +4,7 @@
   "version": "1.5.0",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-07-19",
-  "releaseNotes": "Final beta. 1.4.7 fixes a discovery-reliability bug where devices could disappear on repeat scans, adds capability-aware device events, firmware checking and fall back to LAN-only discovery if LIFX Cloud is unreachable. Full changelog in the README.",
+  "releaseNotes": "Final beta v1.5.0. Fixes a discovery-reliability bug where devices could disappear on repeat scans, adds capability-aware device events, firmware checking and fall back to LAN-only discovery if LIFX Cloud is unreachable. Full changelog in the README.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
