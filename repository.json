@@ -1,0 +1,13 @@
+{
+  "author": "Gordon Thelander",
+  "gitHubUrl": "https://github.com/GordonThelander",
+  "payPalUrl": "",
+  "packages": [
+    {
+      "name": "LIFX Light Manager",
+      "category": "Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/packageManifest.json",
+      "description": "Discovers, creates and locally controls LIFX lights, combining LIFX Cloud metadata with local LAN discovery and control."
+    }
+  ]
+}
