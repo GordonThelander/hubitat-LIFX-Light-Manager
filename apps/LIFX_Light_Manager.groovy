@@ -58,8 +58,15 @@ preferences {
 @Field static final Integer LIFX_FULL_ON = 65535
 @Field static final Integer LIFX_FULL_OFF = 0
 
-@Field static final Integer VALIDATION_RESEND_DELAY_MS = 700
-@Field static final Integer VALIDATION_FINISH_DELAY_MS = 2500
+// Validation probes used to fire as an unpaced burst (one sendHubCommand per known device, back
+// to back) - the same packet-burst pattern that caused the discovery sweep's "pending hub
+// commands" backlog earlier, just at validation-probe scale. With a fleet of a dozen-plus devices
+// this could delay some probes/responses past the window below, wrongly wiping a reachable
+// device's LAN data as "unconfirmed". Pacing the sends and widening the window fixes both the
+// cause and gives slower responses more room.
+@Field static final Integer VALIDATION_PROBE_PACE_MS = 30
+@Field static final Integer VALIDATION_RESEND_DELAY_MS = 1500
+@Field static final Integer VALIDATION_FINISH_DELAY_MS = 3000
 @Field static final Integer BROADCAST_PULSE_START_DELAY_MS = 50
 @Field static final Integer BROADCAST_PULSE_INTERVAL_MS = 3000
 @Field static final Integer SWEEP_BATCH_START_DELAY_MS = 20
@@ -399,7 +406,7 @@ void startValidationProbe() {
     atomicState.validationStartedAt = now()
     atomicState.phase = "Validating ${knownIps.size()} known device IP address(es) before rediscovery"
     state.validationIps = knownIps
-    knownIps.each { ip -> sendLifx(ip, LIFX_MSG.GET_SERVICE) } // unicast probe
+    knownIps.each { ip -> sendLifx(ip, LIFX_MSG.GET_SERVICE); pauseExecution(VALIDATION_PROBE_PACE_MS) } // unicast probe
     runInMillis(VALIDATION_RESEND_DELAY_MS, "resendValidationProbe")
 }
 
@@ -413,7 +420,7 @@ void resendValidationProbe() {
         beginFullLanRediscoveryCycle()
         return
     }
-    ips.each { ip -> sendLifx(ip, LIFX_MSG.GET_SERVICE) } // unicast probe, resent in case the first packet was dropped
+    ips.each { ip -> sendLifx(ip, LIFX_MSG.GET_SERVICE); pauseExecution(VALIDATION_PROBE_PACE_MS) } // unicast probe, resent in case the first packet was dropped
     if (((atomicState.discoveryRunId ?: 0) as Integer) != myRunId) return
     runInMillis(VALIDATION_FINISH_DELAY_MS, "finishValidationProbe")
 }
