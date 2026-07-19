@@ -2838,7 +2838,9 @@ def parseChildLifx(response) {
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE) {
             Map light = parseLightState(parsed.payloadHex)
             Integer saturation = scaleDown100(light.saturation ?: 0)
-            if (light.label) child.sendEvent(name: "label", value: light.label)
+            // "label" reflects Hubitat's own local naming (see childLabelForRow()), set at child
+            // creation/rename time - the physical bulb's raw label is intentionally not synced
+            // back on refresh, since that would silently overwrite a user's local rename.
             child.sendEvent(name: "switch", value: ((light.power ?: 0) as Integer) > 0 ? "on" : "off")
             child.sendEvent(name: "level", value: scaleDown100(light.brightness ?: 0))
             // Mono White declares neither ColorControl nor ColorTemperature, and Tunable White
