@@ -4,7 +4,7 @@
   "version": "1.5.2",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-07-19",
-  "releaseNotes": "Final beta v1.5.2. Adds native LIFX Breathe and Pulse colour effects as Rule Machine Custom Actions on colour-capable bulbs and the Master Switch - breathe(baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) and pulse(same), with only the colours required. Runs until stopped by a later command (setColor/on/off). Full changelog in the README.",
+  "releaseNotes": "LIFX Light Manager uses LIFX Cloud and LAN discovery to create locally controllable LIFX lights. It creates Hubitat devices matched to each bulb's real capabilities, handles IP address changes automatically, and checks firmware version and WiFi signal strength. It also exposes native LIFX features such as Infrared control, and Breathe/Pulse colour effects. Full changelog in the README.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
