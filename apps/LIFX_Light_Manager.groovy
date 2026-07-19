@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.4.7
+ * Version: 1.5.0
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -42,6 +42,10 @@ preferences {
 // Not yet referenced anywhere - added as its own isolated step so a hub-side compile
 // problem with @Field (unused elsewhere in this file until now) can be caught before
 // anything depends on it.
+
+// Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
+// without opening the code editor. Bump alongside the header comment above on every release.
+@Field static final String APP_VERSION = "1.5.0"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -138,18 +142,18 @@ def mainPage(params = null) {
     // Auto-refresh only while discovery is running. Leaving refresh on permanently makes
     // Hubitat re-render the page while editing text, ticking boxes, or selecting table text.
     if (isDiscoveryRunning()) {
-        return dynamicPage(name: "mainPage", title: "LIFX Light Manager", install: true, uninstall: true, refreshInterval: 3) {
+        return dynamicPage(name: "mainPage", title: "v${APP_VERSION}", install: true, uninstall: true, refreshInterval: 3) {
             renderMainPageContent(advanced)
         }
     }
 
-    return dynamicPage(name: "mainPage", title: "LIFX Light Manager", install: true, uninstall: true) {
+    return dynamicPage(name: "mainPage", title: "v${APP_VERSION}", install: true, uninstall: true) {
         renderMainPageContent(advanced)
     }
 }
 
 void renderMainPageContent(Boolean advanced) {
-    section("LIFX discovery") {
+    section("<b>LIFX discovery</b>") {
         paragraph "Go to <a href='https://cloud.lifx.com/' target='_blank'>https://cloud.lifx.com/</a>, log in using your LIFX credentials, then use the top-right account menu to acquire a Personal Access Token. Paste that token below before running Discovery."
         input "lifxCloudToken", "password",
             title: "LIFX Personal Access Token",
@@ -217,19 +221,19 @@ void renderMainPageContent(Boolean advanced) {
     }
 
     if (atomicState.childCreateResult) {
-        section("Child device creation") {
+        section("<b>Child device creation</b>") {
             paragraph atomicState.childCreateResult
         }
     }
 
     if (atomicState.discoveredRenameResult) {
-        section("Discovered light rename") {
+        section("<b>Discovered light rename</b>") {
             paragraph atomicState.discoveredRenameResult
         }
     }
 
     if (atomicState.childRenameResult) {
-        section("Child device rename") {
+        section("<b>Child device rename</b>") {
             paragraph atomicState.childRenameResult
         }
     }
@@ -239,7 +243,7 @@ void renderMainPageContent(Boolean advanced) {
     }
 
     if (advanced) {
-        section("Advanced status") {
+        section("<b>Advanced status</b>") {
             paragraph statusHtml()
         }
         section("<b>Optional child status polling</b>") {
