@@ -1,8 +1,8 @@
 /*
  * LIFX Local Tunable White
  * Namespace: Hubitat Integrations
- * Version: 1.5.0
- * Parent app: LIFX Light Manager 1.5.0+
+ * Version: 1.5.1
+ * Parent app: LIFX Light Manager 1.5.1+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -17,6 +17,7 @@ metadata {
         capability "Refresh"
         capability "Polling"
         capability "Initialize"
+        capability "SignalStrength"
         attribute "label", "string"
         attribute "uid", "string"
         attribute "lanIp", "string"
@@ -35,6 +36,7 @@ def initialize() {
     try { sendEvent(name: "lanIp", value: getDataValue('ip') ?: '') } catch (Throwable t) { log.debug "sendEvent(lanIp) failed: ${t.message}" }
     try { sendEvent(name: "hostFirmware", value: getDataValue('hostFirmware') ?: '') } catch (Throwable t) { log.debug "sendEvent(hostFirmware) failed: ${t.message}" }
     try { sendEvent(name: "hostFirmwareBuild", value: getDataValue('hostFirmwareBuild') ?: '') } catch (Throwable t) { log.debug "sendEvent(hostFirmwareBuild) failed: ${t.message}" }
+    try { if (getDataValue('rssi')) sendEvent(name: "rssi", value: getDataValue('rssi'), unit: "dBm") } catch (Throwable t) { log.debug "sendEvent(rssi) failed: ${t.message}" }
     initialiseGoogleSafeState()
     try { refresh() } catch (Throwable t) { log.debug "refresh(...) failed: ${t.message}" }
 }

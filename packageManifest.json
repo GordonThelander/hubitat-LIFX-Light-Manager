@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-07-19",
-  "releaseNotes": "Final beta v1.5.0. Fixes a discovery-reliability bug where devices could disappear on repeat scans, adds capability-aware device events, firmware checking and fall back to LAN-only discovery if LIFX Cloud is unreachable. Full changelog in the README.",
+  "releaseNotes": "Final beta v1.5.1. Adds an on-demand WiFi signal strength check (under Advanced) that queries every saved device over LAN and adds a WiFi Signal column to the device preparation table, shown in dBm. Adds optional hourly background maintenance (on by default) that runs Discovery, Firmware check and WiFi signal check automatically on a staggered schedule (:00, :15 and :30 past each hour), so the device table stays current without needing to open the app. Full changelog in the README.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.5.0"
+      "version": "1.5.1"
     }
   ],
   "drivers": [
@@ -24,7 +24,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_White_Mono_Driver.groovy",
       "required": true,
-      "version": "1.5.0"
+      "version": "1.5.1"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2002",
@@ -32,7 +32,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Tunable_White_Driver.groovy",
       "required": true,
-      "version": "1.5.0"
+      "version": "1.5.1"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2003",
@@ -40,7 +40,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Colour_Driver.groovy",
       "required": true,
-      "version": "1.5.0"
+      "version": "1.5.1"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2004",
@@ -48,7 +48,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Plus_Colour_Driver.groovy",
       "required": true,
-      "version": "1.5.0"
+      "version": "1.5.1"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af3001",
@@ -56,7 +56,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Master_Switch_Driver.groovy",
       "required": true,
-      "version": "1.5.0"
+      "version": "1.5.1"
     }
   ]
 }

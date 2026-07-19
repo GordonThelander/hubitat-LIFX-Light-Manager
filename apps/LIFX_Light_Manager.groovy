@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.5.0
+ * Version: 1.5.1
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -45,13 +45,14 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.0"
+@Field static final String APP_VERSION = "1.5.1"
 
 @Field static final Integer LIFX_PORT = 56700
 
 @Field static final Map LIFX_MSG = [
     GET_SERVICE: 2, STATE_SERVICE: 3, GET_VERSION: 32, STATE_VERSION: 33,
     GET_HOST_FIRMWARE: 14, STATE_HOST_FIRMWARE: 15,
+    GET_WIFI_INFO: 16, STATE_WIFI_INFO: 17,
     GET_GROUP: 51, STATE_GROUP: 53, GET_LOCATION: 48, STATE_LOCATION: 50,
     GET_LABEL: 23, STATE_LABEL: 25, ACK: 45,
     LIGHT_GET: 101, LIGHT_SET_COLOR: 102, LIGHT_STATE: 107,
@@ -85,6 +86,7 @@ preferences {
 @Field static final Long STALE_RUN_THRESHOLD_MS = 600000L
 @Field static final Long RECENT_REMOVAL_WINDOW_MS = 30000L
 @Field static final Integer FIRMWARE_RESEND_DELAY_MS = 2500
+@Field static final Integer WIFI_CHECK_RESEND_DELAY_MS = 2500
 
 @Field static final Integer PERCENT_MIN = 0
 @Field static final Integer PERCENT_MAX = 100
@@ -94,6 +96,14 @@ preferences {
 // firmware-check resend.
 @Field static final List<String> DISCOVERY_SCHEDULED_JOBS = [
     "resendValidationProbe", "finishValidationProbe", "broadcastPulse", "processSweepBatch"
+].asImmutable()
+
+// Background maintenance jobs are staggered within the hour (0/15/30 past) rather than firing
+// together, since discovery alone can legitimately take several minutes worst-case (see
+// STALE_RUN_THRESHOLD_MS above) - starting firmware/WiFi checks mid-discovery would just add to
+// the same outbound command budget discovery is already using.
+@Field static final List<String> BACKGROUND_MAINTENANCE_JOBS = [
+    "scheduledBackgroundDiscovery", "scheduledBackgroundFirmwareCheck", "scheduledBackgroundWifiCheck"
 ].asImmutable()
 
 // ---------------- Hubitat lifecycle ----------------
@@ -107,6 +117,7 @@ def updated() {
     atomicState.showAdvanced = false
     handleDiscoveryButtonFallback()
     configureStatusPolling(false)
+    configureBackgroundMaintenance(false)
 }
 def uninstalled() { unschedule() }
 
@@ -118,6 +129,8 @@ def appButtonHandler(String btn) {
     if (btn == "applyStatusPollingBtn") configureStatusPolling()
     if (btn == "pollStatusNowBtn") pollManagedChildSwitchStatus()
     if (btn == "checkFirmwareBtn") checkDeviceFirmware()
+    if (btn == "checkWifiBtn") checkWifiSignal()
+    if (btn == "applyBackgroundMaintenanceBtn") configureBackgroundMaintenance()
     if (btn == "renameChildDevicesBtn") renameManagedChildDevicesFromSettings()
     if (btn == "createFastGroupBtn") createOrUpdateFastGroupChildDevice()
     if (btn == "advancedBtn") toggleAdvanced()
@@ -267,6 +280,21 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "Queries the LIFX LAN firmware version for every saved device with a known IP address, including devices not yet installed as child devices. Manual/on-demand only - not part of automatic Discovery."
             input "checkFirmwareBtn", "button", title: "Check firmware", submitOnChange: true
             if (atomicState.firmwareCheckResult) paragraph atomicState.firmwareCheckResult
+        }
+        section("<b>WiFi signal check</b>") {
+            paragraph "Queries the LIFX LAN WiFi signal strength for every saved device with a known IP address, including devices not yet installed as child devices. Manual/on-demand only - not part of automatic Discovery."
+            input "checkWifiBtn", "button", title: "Check WiFi signal", submitOnChange: true
+            if (atomicState.wifiCheckResult) paragraph atomicState.wifiCheckResult
+        }
+        section("<b>Background maintenance</b>") {
+            paragraph "Runs Discovery, Firmware check and WiFi signal check automatically once an hour (staggered a few minutes apart), so the device table stays reasonably current without needing to open the app. On by default."
+            input "backgroundMaintenanceOn", "bool",
+                title: "Enable hourly background maintenance",
+                defaultValue: true,
+                required: false,
+                submitOnChange: true
+            input "applyBackgroundMaintenanceBtn", "button", title: "Apply background maintenance settings", submitOnChange: true
+            if (atomicState.backgroundMaintenanceResult) paragraph atomicState.backgroundMaintenanceResult
         }
         section("<b>Remove stale saved rows</b>") {
             paragraph "Rows below have no installed Hubitat child device and can be safely removed from the saved device table - for example, a device deleted from LIFX Cloud. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
@@ -1188,6 +1216,22 @@ def parseLifx(response) {
                 }
             }
             break
+        case LIFX_MSG.STATE_WIFI_INFO:
+            // Only sent in response to the manual Check WiFi signal button - reuses the same
+            // cloud-matched write-back path as STATE_HOST_FIRMWARE above.
+            Map wifi = parseWifiInfoPayload(parsed.payloadHex)
+            if (c && wifi.rssi != null) {
+                c.wifiRssi = wifi.rssi
+                c.wifiCheckedAt = now()
+                def wifiChild = getChildDevice(childDniForRow(c))
+                if (wifiChild) {
+                    try {
+                        wifiChild.updateDataValue('rssi', wifi.rssi.toString())
+                        wifiChild.sendEvent(name: 'rssi', value: wifi.rssi, unit: 'dBm')
+                    } catch (Throwable t) { log.debug "wifi child data update failed: ${t.message}" }
+                }
+            }
+            break
         case LIFX_MSG.STATE_GROUP:
             Map groupData = parseLabelPayload(parsed.payloadHex)
             if (groupData.label) dev.group = groupData.label
@@ -1287,6 +1331,18 @@ Map parseFirmwarePayload(String payloadHex) {
     Integer major = leU16(payloadHex, 36)
     return [build: build, major: major, minor: minor, version: "${major}.${minor}".toString()]
 }
+
+Map parseWifiInfoPayload(String payloadHex) {
+    // STATE_WIFI_INFO payload: signal(float32) + tx(u32) + rx(u32) + reserved(i16). Only signal
+    // is used - it's a raw linear value, not already in dBm, hence the log10 conversion below
+    // (the same conversion community LIFX drivers use for this same field).
+    if (!payloadHex || payloadHex.size() < 8) return [:]
+    Float signal = leFloat32(payloadHex, 0)
+    if (signal == null || signal <= 0f) return [:]
+    Integer rssi = Math.floor(10 * Math.log10(signal) + 0.5).toInteger()
+    return [rssi: rssi]
+}
+
 
 
 Map parseLabelPayload(String payloadHex) {
@@ -2281,6 +2337,52 @@ def pollManagedChildSwitchStatus() {
     refreshMasterSwitchMembership()
 }
 
+Boolean backgroundMaintenanceEnabled() {
+    try { return backgroundMaintenanceOn == true || backgroundMaintenanceOn?.toString() == "true" } catch (Throwable t) { log.debug "backgroundMaintenanceOn lookup failed: ${t.message}" }
+    return false
+}
+
+void configureBackgroundMaintenance(Boolean showResult = true) {
+    BACKGROUND_MAINTENANCE_JOBS.each { jobName ->
+        try { unschedule(jobName) } catch (Throwable t) { log.debug "unschedule(${jobName}) failed: ${t.message}" }
+    }
+
+    if (!backgroundMaintenanceEnabled()) {
+        if (showResult) atomicState.backgroundMaintenanceResult = "Hourly background maintenance is disabled."
+        return
+    }
+
+    try {
+        schedule("0 0 * * * ?", "scheduledBackgroundDiscovery")
+        schedule("0 15 * * * ?", "scheduledBackgroundFirmwareCheck")
+        schedule("0 30 * * * ?", "scheduledBackgroundWifiCheck")
+        atomicState.backgroundMaintenanceResult = "Hourly background maintenance enabled: Discovery at :00, firmware check at :15, WiFi signal check at :30 past each hour."
+    } catch (Throwable t) {
+        atomicState.backgroundMaintenanceResult = "Hourly background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
+        log.warn atomicState.backgroundMaintenanceResult
+    }
+}
+
+@SuppressWarnings("unused")
+void scheduledBackgroundDiscovery() {
+    if (!backgroundMaintenanceEnabled()) { try { unschedule("scheduledBackgroundDiscovery") } catch (Throwable t) { log.debug "unschedule(...) failed: ${t.message}" }; return }
+    // startCombinedDiscovery() already guards against overlapping a still-in-progress run (manual
+    // or otherwise), so this is safe to fire unconditionally on the schedule.
+    startCombinedDiscovery()
+}
+
+@SuppressWarnings("unused")
+void scheduledBackgroundFirmwareCheck() {
+    if (!backgroundMaintenanceEnabled()) { try { unschedule("scheduledBackgroundFirmwareCheck") } catch (Throwable t) { log.debug "unschedule(...) failed: ${t.message}" }; return }
+    checkDeviceFirmware()
+}
+
+@SuppressWarnings("unused")
+void scheduledBackgroundWifiCheck() {
+    if (!backgroundMaintenanceEnabled()) { try { unschedule("scheduledBackgroundWifiCheck") } catch (Throwable t) { log.debug "unschedule(...) failed: ${t.message}" }; return }
+    checkWifiSignal()
+}
+
 @SuppressWarnings("unused")
 void checkDeviceFirmware() {
     // Runs over every saved row with an IP (not just installed children) so not-yet-installed
@@ -2317,6 +2419,40 @@ void resendFirmwareCheck() {
         pauseExecution(60)
     }
     atomicState.firmwareCheckResult = "Firmware check resent to ${rows.size()} device${rows.size() == 1 ? '' : 's'} that hadn't responded yet."
+}
+
+@SuppressWarnings("unused")
+void checkWifiSignal() {
+    // Mirrors checkDeviceFirmware() - runs over every saved row with an IP, manual/on-demand
+    // only, since WiFi signal isn't available from LIFX Cloud either.
+    atomicState.wifiCheckStartedAt = now()
+    List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
+    Integer sent = 0
+    Integer skipped = 0
+    rows.each { row ->
+        if ((row.ip ?: '').toString().trim()) {
+            sendLifx(row.ip.toString(), LIFX_MSG.GET_WIFI_INFO)
+            sent++
+            pauseExecution(60)
+        } else {
+            skipped++
+        }
+    }
+    atomicState.wifiCheckResult = "WiFi signal check sent to ${sent} device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update the WiFi Signal column as they arrive."
+    if (sent > 0) runInMillis(WIFI_CHECK_RESEND_DELAY_MS, "resendWifiCheck")
+}
+
+@SuppressWarnings("unused")
+void resendWifiCheck() {
+    Long startedAt = (atomicState.wifiCheckStartedAt ?: 0L) as Long
+    List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
+        .findAll { (it.ip ?: '').toString().trim() && ((it.wifiCheckedAt ?: 0L) as Long) < startedAt }
+    if (!rows) return
+    rows.each { row ->
+        sendLifx(row.ip.toString(), LIFX_MSG.GET_WIFI_INFO)
+        pauseExecution(60)
+    }
+    atomicState.wifiCheckResult = "WiFi signal check resent to ${rows.size()} device${rows.size() == 1 ? '' : 's'} that hadn't responded yet."
 }
 
 void refreshMasterSwitchMembership(masterDevice = null) {
@@ -2980,7 +3116,7 @@ String curatedTableHtml() {
     b << tableOpenHtml()
     b << "<tr>"
     Map curatedHeaderKeys = ["UID":"uid", "Label":"label", "Local name":"localName", "IP address":"ip", "Last seen":"lastSeen", "Cloud connected":"connected"]
-    ["UID", "Label", "Local name", "IP address", "Last seen", "Group", "Product", "Firmware", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
+    ["UID", "Label", "Local name", "IP address", "Last seen", "Group", "Product", "Firmware", "WiFi Signal", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
         b << headerCell(h, idx, curatedHeaderKeys[h])
     }
     b << "</tr>"
@@ -2995,6 +3131,7 @@ String curatedTableHtml() {
         String productDisplay = r.productName ?: r.productIdentifier ?: (r.lanProduct ? "LAN product ${r.lanProduct}" : "")
         b << cell(productDisplay, 5)
         b << cell(r.firmwareVersion ?: "")
+        b << cell(r.wifiRssi != null ? "${r.wifiRssi} dBm" : "")
         b << cell(r.capability ?: cloudCapability(r), 6)
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
         b << cell(r.connected == null ? "" : r.connected, null, "connected")
@@ -3456,6 +3593,11 @@ Long leU32(String hex, Integer offset) {
     Long b2 = Long.parseLong(hex.substring(offset + 4, offset + 6), 16)
     Long b3 = Long.parseLong(hex.substring(offset + 6, offset + 8), 16)
     return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+}
+
+Float leFloat32(String hex, Integer offset) {
+    Long bits = leU32(hex, offset)
+    return Float.intBitsToFloat(bits.intValue())
 }
 
 Long leU64(String hex, Integer offset) {

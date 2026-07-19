@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.0
+**Version:** 1.5.1
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -108,13 +108,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.0 |
-| App | 1.5.0 |
-| White Mono driver | 1.5.0 |
-| Tunable White driver | 1.5.0 |
-| Colour driver | 1.5.0 |
-| Plus Colour driver | 1.5.0 |
-| Master Switch driver | 1.5.0 |
+| Package | 1.5.1 |
+| App | 1.5.1 |
+| White Mono driver | 1.5.1 |
+| Tunable White driver | 1.5.1 |
+| Colour driver | 1.5.1 |
+| Plus Colour driver | 1.5.1 |
+| Master Switch driver | 1.5.1 |
 
 ## Known limitations
 
@@ -128,6 +128,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.1:** Adds an on-demand WiFi signal strength check (under Advanced) that queries every saved device over LAN and adds a WiFi Signal column to the device preparation table, shown in dBm. Adds optional hourly background maintenance (on by default) that runs Discovery, Firmware check and WiFi signal check automatically on a staggered schedule (:00, :15 and :30 past each hour), so the device table stays current without needing to open the app.
 
 **1.5.0:** Final beta. Fixes a discovery-reliability bug where devices could disappear on repeat scans, adds capability-aware device events, firmware checking and fall back to LAN-only discovery if LIFX Cloud is unreachable. Full changelog in the README.
 
