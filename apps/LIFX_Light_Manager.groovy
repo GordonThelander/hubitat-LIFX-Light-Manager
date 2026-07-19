@@ -611,10 +611,22 @@ void fetchCloudLights(Boolean cloudOnly) {
         ]) { resp ->
             Integer code = resp?.status as Integer
             if (code < 200 || code >= 300) {
-                atomicState.cloudStatus = "HTTP ${code}"
-                atomicState.status = "cloud-error"
-                atomicState.phase = "Cloud API returned HTTP ${code}"
-                atomicState.curatedReady = true
+                // A rate-limited, auth-failed or transient cloud response used to just stop here,
+                // even when LAN-only discovery using saved metadata could still proceed - mirror
+                // the catch block below's fallback behaviour instead of stranding it.
+                String reason = (code == 401 || code == 403) ? "authentication failed - check your LIFX Cloud token" :
+                    code == 429 ? "rate limited by LIFX Cloud" :
+                    code >= 500 ? "LIFX Cloud server error" : "unexpected response"
+                atomicState.cloudStatus = "HTTP ${code} - ${reason}"
+                if (atomicState.runLanAfterCloud == true) {
+                    atomicState.runLanAfterCloud = false
+                    atomicState.phase = "Cloud API ${reason} (HTTP ${code}) - falling back to LAN-only discovery"
+                    startLanDiscovery()
+                } else {
+                    atomicState.status = "cloud-error"
+                    atomicState.phase = "Cloud API ${reason} (HTTP ${code})"
+                    atomicState.curatedReady = true
+                }
                 return
             }
 
