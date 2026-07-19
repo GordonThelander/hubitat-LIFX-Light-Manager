@@ -2812,9 +2812,16 @@ def parseChildLifx(response) {
             if (light.label) child.sendEvent(name: "label", value: light.label)
             child.sendEvent(name: "switch", value: ((light.power ?: 0) as Integer) > 0 ? "on" : "off")
             child.sendEvent(name: "level", value: scaleDown100(light.brightness ?: 0))
-            child.sendEvent(name: "hue", value: scaleDown100(light.hue ?: 0))
-            child.sendEvent(name: "saturation", value: saturation)
-            child.sendEvent(name: "colorTemperature", value: light.kelvin ?: 3500)
+            // Mono White declares neither ColorControl nor ColorTemperature, and Tunable White
+            // declares ColorTemperature but not ColorControl - only emit the events a device's
+            // driver actually declares a capability for.
+            if (rowIsColourCapable(row)) {
+                child.sendEvent(name: "hue", value: scaleDown100(light.hue ?: 0))
+                child.sendEvent(name: "saturation", value: saturation)
+            }
+            if (rowSupportsColorTemperature(row)) {
+                child.sendEvent(name: "colorTemperature", value: light.kelvin ?: 3500)
+            }
             // A LightState response is the only place colorMode can be reconciled with the bulb's
             // actual reported saturation - without this, a light recoloured outside Hubitat (e.g.
             // from the LIFX app) kept a stale colorMode, and the next brightness-only command would

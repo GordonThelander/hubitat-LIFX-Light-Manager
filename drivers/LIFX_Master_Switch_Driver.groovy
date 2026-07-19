@@ -20,6 +20,7 @@ metadata {
         capability "SwitchLevel"
         capability "ColorControl"
         capability "ColorTemperature"
+        capability "ColorMode"
         capability "Refresh"
         capability "Polling"
         capability "Initialize"
