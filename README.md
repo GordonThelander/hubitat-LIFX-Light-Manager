@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.4.6
+**Version:** 1.4.7
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -108,13 +108,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.4.6 |
-| App | 1.4.6 |
-| White Mono driver | 1.4.6 |
-| Tunable White driver | 1.4.6 |
-| Colour driver | 1.4.6 |
-| Plus Colour driver | 1.4.6 |
-| Master Switch driver | 1.4.6 |
+| Package | 1.4.7 |
+| App | 1.4.7 |
+| White Mono driver | 1.4.7 |
+| Tunable White driver | 1.4.7 |
+| Colour driver | 1.4.7 |
+| Plus Colour driver | 1.4.7 |
+| Master Switch driver | 1.4.7 |
 
 ## Known limitations
 
@@ -128,6 +128,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.4.7:** Resilience patch from the same external code review, plus two urgent discovery-reliability fixes found while testing it. Fixed the actual root cause of devices being wiped to "LAN IP missing" on repeat Discovery runs: the adjacent-UID matching heuristic could refuse to match a device once enough devices in the fleet had cloud UIDs within 1 of each other's LAN MACs (very likely with bulbs bought in the same batch), even though the device had matched successfully before - it now prefers a device's already-confirmed UID first. Also paced the validation-probe LAN sends, which were firing as an unpaced burst. Separately: raised the discovery stale-run threshold to comfortably exceed a legitimate full run's worst-case duration; LAN refresh responses no longer emit hue/saturation/colour-temperature events to devices whose driver doesn't declare those capabilities, and the Master Switch now declares ColorMode; a bad LIFX Cloud response (rate limited, auth failure, server error) now falls back to LAN-only discovery instead of stopping combined discovery outright; the Check Firmware action now persists firmware version and build to the installed child device instead of only the diagnostic table; and refresh no longer overwrites a locally renamed device's label with the bulb's factory label.
 
 **1.4.6:** Correctness patch from an external static code review, verified against current code before fixing. Explicit zero values (saturation 0, level 0) are no longer silently overwritten by defaults. `setLevel(0)` now sends a real LIFX power-off instead of just dimming to black while staying powered. Master Switch off no longer clobbers cached child brightness, and Master Switch refresh no longer collapses level to a binary 100/0. A light recoloured outside Hubitat (e.g. from the LIFX app) now has its colour mode reconciled on refresh instead of going white on the next brightness change. Discovery's scheduled jobs are now isolated from status polling and the firmware-check resend, so starting or stopping Discovery no longer silently disables them. Colour-temperature events are now gated to devices that actually support colour temperature. Individual child commands and LAN response parsing now survive Clear all Data for already-installed devices, matching how the Master Switch already behaved.
 
