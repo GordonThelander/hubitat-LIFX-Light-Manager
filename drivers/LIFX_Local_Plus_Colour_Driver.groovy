@@ -1,8 +1,8 @@
 /*
  * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: 1.5.2
- * Parent app: LIFX Light Manager 1.5.2+
+ * Version: 1.5.4
+ * Parent app: LIFX Light Manager 1.5.4+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -29,7 +29,6 @@ metadata {
         attribute "IRLevel", "number"
         attribute "infraredLevel", "number"
         command "setInfraredLevel", [[name: "Level", type: "NUMBER"]]
-        command "setIRLevel", [[name: "Level", type: "NUMBER"]]
         // Rule Machine's Custom Action has no ENUM/dropdown support for custom command
         // parameters (confirmed live) - only string/number/decimal are offered, so these are
         // typed by hand. Valid names: Soft White, White, Daylight, Warm White, Red, Orange,
@@ -112,6 +111,9 @@ private void fastPower(String value) {
     ))
     try { sendEvent(name: "switch", value: value, displayed: false) } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
     // SetLightPower (117) does not change brightness on the bulb, so `level` is left untouched here.
+    // Fast path bypasses the parent app entirely for speed, so it must separately trigger Master
+    // Switch reconciliation - childOn()/childOff() in the app do this, but this path never calls them.
+    try { parent.requestMasterStateReconciliation() } catch (Throwable t) { log.debug "requestMasterStateReconciliation() failed: ${t.message}" }
 }
 
 private String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
@@ -171,8 +173,4 @@ def setSaturation(value) { if (!requireParent()) return; parent.childSetSaturati
 def breathe(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) { if (!requireParent()) return; parent.childBreathe(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) }
 def pulse(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) { if (!requireParent()) return; parent.childPulse(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) }
 
-// infraredLevel/setInfraredLevel and IRLevel/setIRLevel are two names for the same underlying
-// value, kept both for backward compatibility with existing rules/dashboards built against
-// either name. infraredLevel is the canonical one going forward; IRLevel is a deprecated alias.
 def setInfraredLevel(value) { if (!requireParent()) return; parent.childSetInfraredLevel(device, value) }
-def setIRLevel(value) { if (!requireParent()) return; parent.childSetInfraredLevel(device, value) }

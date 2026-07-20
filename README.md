@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.2
+**Version:** 1.5.4
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -133,13 +133,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.2 |
-| App | 1.5.2 |
-| White Mono driver | 1.5.2 |
-| Tunable White driver | 1.5.2 |
-| Colour driver | 1.5.2 |
-| Plus Colour driver | 1.5.2 |
-| Master Switch driver | 1.5.2 |
+| Package | 1.5.4 |
+| App | 1.5.4 |
+| White Mono driver | 1.5.4 |
+| Tunable White driver | 1.5.4 |
+| Colour driver | 1.5.4 |
+| Plus Colour driver | 1.5.4 |
+| Master Switch driver | 1.5.4 |
 
 ## Known limitations
 
@@ -153,6 +153,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.4:** Correctness and reliability maintenance release, verified through live-hub testing rather than static review alone. Fixed several zero-value command paths (Master defaults, Breathe/Pulse brightness, cached hue/saturation) where an explicit 0 was silently replaced by a nonzero default. Level-0 colour and colour-temperature commands now send a real power-off packet instead of just publishing an optimistic `switch: off` event while the bulb stays lit. Breathe/Pulse speed now accepts decimal seconds instead of silently falling back to the default. The Master Switch checkbox and an IP-changed row's selection no longer force themselves back to true on every page render, and child create/update no longer resets status-polling preferences to their defaults on routine updates. The Master Switch aggregate state now reconciles after individual child switch changes, including the fast local on/off path, with a debounce that stays correct under hub load. Child create/update results now report Created/Updated counts, not just Skipped/Failed. Fixed an identity-matching edge case where a device's LAN MAC can be reported two different ways depending on which response answered, which could silently orphan a row from its installed device on rediscovery. Widened Discovery's validation timing budget for larger fleets. Several smaller UI fixes: child-select checkboxes clear after a successful create/update instead of staying ticked, result messages clear after being shown once instead of persisting into a later session, create/update now picks up a pending local-name rename itself rather than requiring a separate step first, the discovered-lights list sorts by IP instead of label, and a duplicate infrared command was removed.
 
 **1.5.2:** Adds native LIFX Breathe and Pulse colour effects as Rule Machine Custom Actions on colour-capable bulbs and the Master Switch, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) above for full details.
 

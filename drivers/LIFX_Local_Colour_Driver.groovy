@@ -1,8 +1,8 @@
 /*
  * LIFX Local Colour
  * Namespace: Hubitat Integrations
- * Version: 1.5.2
- * Parent app: LIFX Light Manager 1.5.2+
+ * Version: 1.5.4
+ * Parent app: LIFX Light Manager 1.5.4+
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -106,6 +106,9 @@ private void fastPower(String value) {
     ))
     try { sendEvent(name: "switch", value: value, displayed: false) } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
     // SetLightPower (117) does not change brightness on the bulb, so `level` is left untouched here.
+    // Fast path bypasses the parent app entirely for speed, so it must separately trigger Master
+    // Switch reconciliation - childOn()/childOff() in the app do this, but this path never calls them.
+    try { parent.requestMasterStateReconciliation() } catch (Throwable t) { log.debug "requestMasterStateReconciliation() failed: ${t.message}" }
 }
 
 private String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
