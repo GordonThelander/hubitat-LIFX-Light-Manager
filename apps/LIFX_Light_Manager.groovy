@@ -1,11 +1,21 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.2
+ * Version: 1.5.3
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
  * the same physical bulbs, without touching production child devices or automations.
+ *
+ * 1.5.3 correctness patch (F-01 to F-08 from the 1.5.2 code review):
+ * - F-01: preserve valid 0 values in level/brightness/saturation command paths
+ * - F-02: level-0 colour/CT commands now send a real SET_POWER off, not just an optimistic event
+ * - F-03: Breathe/Pulse speed accepts decimal seconds (was silently ignored, fell back to default)
+ * - F-04: Master Switch checkbox no longer forces itself back to true on every page render
+ * - F-05: an unticked IP-changed row no longer forces itself back to selected on page reload
+ * - F-06: child create/update no longer resets polling prefs to enabled/2min on every update
+ * - F-07: Master Switch aggregate state now reconciles after individual child switch changes
+ * - F-08: child create/update results now report Created/Updated counts, not just Skipped/Failed
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -49,7 +59,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.2"
+@Field static final String APP_VERSION = "1.5.3"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -127,6 +137,7 @@ preferences {
 @Field static final Long RECENT_REMOVAL_WINDOW_MS = 30000L
 @Field static final Integer FIRMWARE_RESEND_DELAY_MS = 2500
 @Field static final Integer WIFI_CHECK_RESEND_DELAY_MS = 2500
+@Field static final Integer MASTER_RECONCILE_DEBOUNCE_MS = 500
 
 @Field static final Integer PERCENT_MIN = 0
 @Field static final Integer PERCENT_MAX = 100
@@ -241,7 +252,10 @@ void renderMainPageContent(Boolean advanced) {
                 String currentLocal = html((row?.customLabel ?: row?.localLabel ?: "").toString().trim())
 
                 Boolean defaultSelected = childSelectDefault(uidText)
-                if (defaultSelected) {
+                // Only persist the default the first time this row's checkbox setting appears -
+                // otherwise an explicit untick is undone on every subsequent page render for as
+                // long as the row's IP-change condition remains true.
+                if (defaultSelected && settings[childSelectSettingName(uidText)] == null) {
                     try { app.updateSetting(childSelectSettingName(uidText), [type: "bool", value: true]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
                 }
                 input childSelectSettingName(uidText), "bool",
@@ -386,7 +400,12 @@ void initialiseState() {
     if (atomicState.rowRemovalResult == null) atomicState.rowRemovalResult = ""
     if (lifxCloudToken == null) app.updateSetting("lifxCloudToken", [type: "password", value: ""])
     if (fastGroupName == null) app.updateSetting("fastGroupName", [type: "text", value: "LIFX MASTER SWITCH"])
-    try { app.updateSetting(masterSwitchSelectSettingName(), [type: "bool", value: true]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
+    // Default only when unset - this runs on every mainPage() render, so writing the default
+    // unconditionally here would silently re-tick an explicit false back to true on the next page load.
+    try {
+        String settingName = masterSwitchSelectSettingName()
+        if (settings[settingName] == null) app.updateSetting(settingName, [type: "bool", value: true])
+    } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
 }
 
 Map emptyStats() {
@@ -2078,23 +2097,28 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
 
     atomicState.curatedRows = curated
 
-    String result = ""
-    if (skipped) result += "<b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
-    if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
-
-    String childResult = (skipped || failed) ? result : ""
+    List<String> sections = []
+    if (created) sections << "<b>Created (${created.size()})</b><br/>${created.join('<br/>')}"
+    if (updated) sections << "<b>Updated (${updated.size()})</b><br/>${updated.join('<br/>')}"
+    if (skipped) sections << "<b>Skipped (${skipped.size()})</b><br/>${skipped.join('<br/>')}"
+    if (failed) sections << "<b>Failed (${failed.size()})</b><br/>${failed.join('<br/>')}"
+    String childResult = sections ? sections.join('<br/><br/>') : "No changes were required."
     if (ensureMasterSwitch) {
         createOrUpdateFastGroupChildDevice()
         String masterResult = (atomicState.childCreateResult ?: "").toString()
         refreshMasterSwitchMembership()
         if (masterResult?.toLowerCase()?.contains("failed") || masterResult?.toLowerCase()?.contains("not installed")) {
-            childResult = (childResult ? childResult + "<br/><br/>" : "") + "<b>LIFX MASTER SWITCH</b><br/>" + masterResult
+            childResult = childResult + "<br/><br/><b>LIFX MASTER SWITCH</b><br/>" + masterResult
         }
     } else {
         refreshMasterSwitchMembership()
     }
-    if (created || updated) {
+    if (created) {
+        // Only a genuinely new child gets the default-polling treatment - an ordinary update
+        // (e.g. IP resync) must not reset an already-configured polling preference.
         enableDefaultStatusPollingAfterChildCreation()
+    } else if (updated) {
+        try { configureStatusPolling(false) } catch (Throwable t) { log.debug "configureStatusPolling(...) failed: ${t.message}" }
     }
 
     atomicState.childCreateResult = childResult
@@ -2103,9 +2127,10 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
 void enableDefaultStatusPollingAfterChildCreation() {
     // Safe default after child creation: LAN-only LIGHT.GET_POWER polling every 2 minutes.
     // This does not call the LIFX Cloud API, firmware discovery, product/version lookup,
-    // brightness polling, colour polling or full child refresh.
-    try { app.updateSetting("lifxStatusPollingEnabled", [type: "bool", value: true]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
-    try { app.updateSetting("lifxStatusPollIntervalMinutes", [type: "enum", value: "2"]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
+    // brightness polling, colour polling or full child refresh. Only defaults settings that are
+    // still unset, so an existing installation's polling choice survives adding one more child.
+    try { if (settings["lifxStatusPollingEnabled"] == null) app.updateSetting("lifxStatusPollingEnabled", [type: "bool", value: true]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
+    try { if (settings["lifxStatusPollIntervalMinutes"] == null) app.updateSetting("lifxStatusPollIntervalMinutes", [type: "enum", value: "2"]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
     try {
         configureStatusPolling(false)
         atomicState.statusPollingResult = "Timed child status polling enabled by child-device creation: on/off status only, every 2 minutes."
@@ -2513,6 +2538,23 @@ void refreshMasterSwitchMembership(masterDevice = null) {
     try { dev.sendEvent(name: "onMemberCount", value: onCount) } catch (Throwable t) { log.debug "sendEvent(onMemberCount) failed: ${t.message}" }
 }
 
+// Individual child commands and parsed LAN responses update that one child's own switch state,
+// but never previously touched the Master Switch's aggregate switch attribute - it only changed
+// via direct Master Switch commands or a manual refresh. This debounces a real aggregate
+// recomputation (groupChildRefresh(), which already implements any-member-on semantics) so a
+// burst of individual updates - e.g. a status-poll response wave - triggers one recomputation
+// rather than one per response.
+void requestMasterStateReconciliation() {
+    try { unschedule("reconcileMasterSwitchState") } catch (Throwable t) { log.debug "unschedule(...) failed: ${t.message}" }
+    runInMillis(MASTER_RECONCILE_DEBOUNCE_MS, "reconcileMasterSwitchState")
+}
+
+@SuppressWarnings("unused")
+def reconcileMasterSwitchState() {
+    def master = getChildDevice(fastGroupDni())
+    if (master) groupChildRefresh(master)
+}
+
 void groupChildOn(device) {
     sendBulkSetPower(LIFX_FULL_ON, 0)
     try { device.sendEvent(name: "switch", value: "on") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
@@ -2554,7 +2596,7 @@ void groupChildSetColor(device, Map colorMap, duration = 0) {
 }
 
 void groupChildSetHue(device, value) {
-    groupChildSetColor(device, [hue: value, saturation: device.currentValue('saturation') ?: 100], 0)
+    groupChildSetColor(device, [hue: value, saturation: intOrDefault(device.currentValue('saturation'), 100)], 0)
 }
 
 void groupChildSetSaturation(device, value) {
@@ -2764,7 +2806,14 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
             payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
         }
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
-        if (level > 0) sendPowerOnIfNeeded(row, child, durationMs)
+        if (level > 0) {
+            sendPowerOnIfNeeded(row, child, durationMs)
+        } else {
+            // LIFX tracks power separately from brightness, so a level-0 colour packet alone
+            // leaves the bulb physically powered - send the matching SET_POWER off so the
+            // switch:off event published below reflects real bulb state.
+            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
+        }
     }
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
@@ -2785,7 +2834,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
 void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
-    Integer lvl = clampInt(level ?: 75, PERCENT_MIN, PERCENT_MAX)
+    Integer lvl = clampInt(intOrDefault(level, 75), PERCENT_MIN, PERCENT_MAX)
     Integer brightness = scalePercentToLifx(lvl)
     rows.each { item ->
         Map row = item as Map
@@ -2793,7 +2842,13 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3000)
         List<Integer> payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
-        if (lvl > 0) sendPowerOnIfNeeded(row, child, durationMs)
+        if (lvl > 0) {
+            sendPowerOnIfNeeded(row, child, durationMs)
+        } else {
+            // See sendBulkSetColorOrLevel(): a level-0 colour-temperature packet alone doesn't
+            // power the bulb off, so send the matching SET_POWER off explicitly.
+            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
+        }
     }
     rows.each { row ->
         def child = getChildDevice(childDniForBulkRow(row as Map))
@@ -2865,12 +2920,14 @@ void childOn(device) {
     Map row = rowForManagedChild(device)
     sendSetPower(row, LIFX_FULL_ON, 0)
     try { device.sendEvent(name: "switch", value: "on") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
+    requestMasterStateReconciliation()
 }
 
 void childOff(device) {
     Map row = rowForManagedChild(device)
     sendSetPower(row, LIFX_FULL_OFF, 0)
     try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
+    requestMasterStateReconciliation()
 }
 
 void childSetLevel(device, value, duration = 0) {
@@ -2886,6 +2943,7 @@ void childSetLevel(device, value, duration = 0) {
             device.sendEvent(name: "level", value: 0)
             device.sendEvent(name: "switch", value: "off")
         } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
+        requestMasterStateReconciliation()
         return
     }
     Integer kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
@@ -2904,6 +2962,7 @@ void childSetLevel(device, value, duration = 0) {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: "on")
     } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
+    requestMasterStateReconciliation()
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
@@ -2913,8 +2972,14 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
     Integer lvl = clampInt(firstNonNullInt([level, device.currentValue('level')], 100), PERCENT_MIN, PERCENT_MAX)
     Integer durMs = durationMs(duration)
     sendSetColor(row, 0, 0, scalePercentToLifx(lvl), kelvin, durMs)
-    // Colour-temperature commands should wake the bulb, matching Hue-style rule behaviour.
-    if (lvl > 0) sendPowerOnIfNeeded(row, device, durMs)
+    // Colour-temperature commands should wake the bulb, matching Hue-style rule behaviour. A
+    // level-0 request is the flip side of that contract - LIFX tracks power separately from
+    // brightness, so the colour packet alone won't turn the bulb off.
+    if (lvl > 0) {
+        sendPowerOnIfNeeded(row, device, durMs)
+    } else {
+        sendSetPower(row, LIFX_FULL_OFF, durMs)
+    }
     try {
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "level", value: lvl)
@@ -2923,6 +2988,7 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
         device.sendEvent(name: "colorMode", value: "CT")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "childSetColorTemperature() sendEvent failed: ${t.message}" }
+    requestMasterStateReconciliation()
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
@@ -2936,7 +3002,13 @@ void childSetColor(device, Map colorMap, duration = 0) {
     sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durMs)
     // Colour commands should wake the bulb, matching Hue-style rule behaviour - LIFX tracks power
     // separately from colour, so a colour-only packet won't turn on a bulb that's physically off.
-    if (lvl > 0) sendPowerOnIfNeeded(row, device, durMs)
+    // The flip side of that contract: a level-0 request must send a real SET_POWER off, since the
+    // switch:off event published below would otherwise misrepresent a bulb still powered at 0%.
+    if (lvl > 0) {
+        sendPowerOnIfNeeded(row, device, durMs)
+    } else {
+        sendSetPower(row, LIFX_FULL_OFF, durMs)
+    }
     try {
         device.sendEvent(name: "hue", value: hue100)
         device.sendEvent(name: "saturation", value: sat100)
@@ -2945,15 +3017,16 @@ void childSetColor(device, Map colorMap, duration = 0) {
         device.sendEvent(name: "colorMode", value: "RGB")
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "childSetColor() sendEvent failed: ${t.message}" }
+    requestMasterStateReconciliation()
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
 }
 
 void childSetHue(device, value) {
-    childSetColor(device, [hue: value, saturation: device.currentValue('saturation') ?: 100, level: device.currentValue('level') ?: 100], 0)
+    childSetColor(device, [hue: value, saturation: intOrDefault(device.currentValue('saturation'), 100), level: intOrDefault(device.currentValue('level'), 100)], 0)
 }
 
 void childSetSaturation(device, value) {
-    childSetColor(device, [hue: device.currentValue('hue') ?: 0, saturation: value, level: device.currentValue('level') ?: 100], 0)
+    childSetColor(device, [hue: device.currentValue('hue') ?: 0, saturation: value, level: intOrDefault(device.currentValue('level'), 100)], 0)
 }
 
 void childSetInfraredLevel(device, value) {
@@ -2979,9 +3052,15 @@ List<Integer> resolveNamedColor(String name) {
 // BREATHE_PERIOD_MS comment for why STRING rather than NUMBER). Blank or unparseable falls back
 // to the given default; clamped to a sane range either way.
 Integer resolvePeriodMs(String secondsText, Integer defaultMs) {
-    Integer seconds = safeInt(secondsText)
-    if (seconds == null || seconds <= 0) return defaultMs
-    return clampInt(seconds * 1000, 200, 60000)
+    String text = secondsText?.trim()
+    if (!text) return defaultMs
+    try {
+        BigDecimal seconds = new BigDecimal(text)
+        if (seconds <= 0G) return defaultMs
+        return clampInt((seconds * 1000G).intValue(), 200, 60000)
+    } catch (NumberFormatException ignored) {
+        return defaultMs
+    }
 }
 
 // Optional brightness override (0-100%), typed as a plain number in a STRING field for the same
@@ -3000,11 +3079,13 @@ private void runColorEffect(Map row, device, String baseColorName, String target
     List<Integer> base = resolveNamedColor(baseColorName)
     List<Integer> target = resolveNamedColor(targetColorName)
     Integer baseKelvin = clampKelvin(row, base[2])
-    sendSetColor(row, scalePercentToLifx(base[0]), scalePercentToLifx(base[1]), scalePercentToLifx(baseBrightness ?: 100), baseKelvin, 0)
-    if ((baseBrightness ?: 100) > 0) sendPowerOnIfNeeded(row, device, 0)
+    Integer baseLevel = intOrDefault(baseBrightness, 100)
+    Integer targetLevel = intOrDefault(targetBrightness, 100)
+    sendSetColor(row, scalePercentToLifx(base[0]), scalePercentToLifx(base[1]), scalePercentToLifx(baseLevel), baseKelvin, 0)
+    if (baseLevel > 0) sendPowerOnIfNeeded(row, device, 0)
     List<Integer> payload = buildWaveformPayload(
         scalePercentToLifx(target[0]), scalePercentToLifx(target[1]),
-        scalePercentToLifx(targetBrightness ?: 100), clampKelvin(row, target[2]), periodMs, waveform)
+        scalePercentToLifx(targetLevel), clampKelvin(row, target[2]), periodMs, waveform)
     sendLifxToRow(row, LIFX_MSG.LIGHT_SET_WAVEFORM, payload, false, false, "parseChildLifx", 1, 0)
 }
 
@@ -3139,6 +3220,9 @@ def parseChildLifx(response) {
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_POWER) {
             Integer power = leU16(parsed.payloadHex, 0)
             child.sendEvent(name: "switch", value: power > 0 ? "on" : "off")
+            // A power-state response can reflect a change made outside Hubitat (LIFX app,
+            // physical switch, another controller) - reconcile the Master Switch aggregate too.
+            requestMasterStateReconciliation()
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_INFRARED) {
             Integer ir = leU16(parsed.payloadHex, 0)
             Integer irLevel = scaleDown100(ir)

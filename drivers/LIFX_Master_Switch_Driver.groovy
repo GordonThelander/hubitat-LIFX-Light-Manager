@@ -1,8 +1,8 @@
 /*
  * LIFX Master Switch (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.2
- * Parent app: LIFX Light Manager (Dev) 1.5.2+
+ * Version: 1.5.3
+ * Parent app: LIFX Light Manager (Dev) 1.5.3+
  *
  * Purpose:
  * - Aggregate master switch used for fast whole-fleet LAN control.
@@ -46,7 +46,7 @@ metadata {
 def installed() { initialize() }
 def updated() { initialize() }
 def initialize() {
-    try { if (device.currentValue("level") == null) sendEvent(name: "level", value: (defaultCtLevel ?: 75) as Integer, unit: "%") } catch (Throwable t) { log.debug "sendEvent(level) failed: ${t.message}" }
+    try { if (device.currentValue("level") == null) sendEvent(name: "level", value: (defaultCtLevel == null ? 75 : defaultCtLevel) as Integer, unit: "%") } catch (Throwable t) { log.debug "sendEvent(level) failed: ${t.message}" }
     try { if (device.currentValue("switch") == null) sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
     try { refresh() } catch (Throwable t) { log.debug "refresh(...) failed: ${t.message}" }
 }
@@ -95,7 +95,7 @@ def setMasterColorTemperature(temperature) {
 }
 
 def applyDefault() {
-    setLevel(defaultCtLevel ?: 75, 0)
+    setLevel(defaultCtLevel == null ? 75 : defaultCtLevel, 0)
     setColorTemperature(defaultColorTemperature ?: 3000)
 }
 
