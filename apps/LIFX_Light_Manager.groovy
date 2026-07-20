@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.4
+ * Version: 1.5.5
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -31,6 +31,17 @@
  * - Result messages clear after being shown once instead of persisting into later sessions
  * - Create/update now picks up a pending local-name rename itself, not just via a separate step
  * - Discovered-lights list sorts by IP instead of label; removed unused duplicate setIRLevel
+ *
+ * 1.5.5 - canonical identity overwrite fix (found during external review of 1.5.4):
+ * - childDniForRow() now prefers a row's persisted childDni over re-deriving from lanUid. Previously,
+ *   a row that missed a validation cycle had lanUid blanked by clearLanFieldsForRow(), which made
+ *   childDniForRow() fall back toward the Cloud UID - wrongly convincing the parseLifx() write-back
+ *   guard and removableSavedRows()/removeSavedRowIfNoInstalledChild() that no child was installed.
+ *   That could let a later rediscovery overwrite the canonical lanUid and create a duplicate child
+ *   device, or let "Remove stale saved rows" offer to delete a row whose child still exists.
+ * - clearLanFieldsForRow() no longer blanks lanUid/lanMac/mac/sourceMac for a row with an installed
+ *   child - only reachability fields (ip, lanLastSeen) are cleared, so a later response reporting
+ *   the row's original MAC flavour still matches it directly instead of depending solely on lanUidAlt.
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -74,7 +85,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.4"
+@Field static final String APP_VERSION = "1.5.5"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -574,10 +585,17 @@ void clearLanFieldsForRow(Map row) {
     row.previousIp = row.ip ?: row.previousIp
     row.ip = ""
     row.port = row.port ?: LIFX_PORT
-    row.lanUid = ""
-    row.lanMac = ""
-    row.mac = ""
-    row.sourceMac = ""
+    // A failed reachability probe clears reachability, not durable identity. Once a row has an
+    // installed child, lanUid (and lanUidAlt) are the only things that let a later response - in
+    // whichever MAC flavour it happens to report - re-find this exact row and DNI (see
+    // findCuratedMatchForLanUid()). Blanking lanUid here would force childDniForRow() to fall back
+    // toward the Cloud UID for matching purposes and could re-orphan an already-installed device.
+    if (!getChildDevice(childDniForRow(row))) {
+        row.lanUid = ""
+        row.lanMac = ""
+        row.mac = ""
+        row.sourceMac = ""
+    }
     row.controlUid = ""
     row.protocolTargetUid = ""
     row.target = ""
@@ -1896,6 +1914,12 @@ List<String> controlUidCandidatesForRow(Map row) {
 }
 
 String childDniForRow(Map row) {
+    // Once a row has an installed child, row.childDni is the durable identity - it must win over
+    // re-deriving from lanUid, which a failed validation cycle can blank (see clearLanFieldsForRow()).
+    // Falling back to derivation here would silently point callers like the parseLifx() write-back
+    // guard and removableSavedRows() at the wrong (or a nonexistent) DNI, defeating both.
+    String persistedDni = row?.childDni?.toString()?.trim()
+    if (persistedDni) return persistedDni
     String uid = lanUidForRow(row)
     return uid ? "lifxdev-curated-${uid}".toString() : ""
 }

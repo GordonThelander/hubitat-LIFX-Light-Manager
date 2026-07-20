@@ -4,10 +4,10 @@
   "payPalUrl": "",
   "packages": [
     {
-      "name": "LIFX Light Manager",
+      "name": "LIFX Light Manager (Dev)",
       "category": "Integrations",
-      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/packageManifest.json",
-      "description": "Discovers, creates and locally controls LIFX lights, combining LIFX Cloud metadata with local LAN discovery and control."
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/dev/packageManifest.json",
+      "description": "Private test channel tracking the dev branch. Installs alongside production under a separate namespace/DNI prefix. Not for general installation."
     }
   ]
 }
