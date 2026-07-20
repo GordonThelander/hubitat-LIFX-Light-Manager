@@ -2567,13 +2567,25 @@ void refreshMasterSwitchMembership(masterDevice = null) {
 // recomputation (groupChildRefresh(), which already implements any-member-on semantics) so a
 // burst of individual updates - e.g. a status-poll response wave - triggers one recomputation
 // rather than one per response.
+//
+// unschedule() + runInMillis() alone is not a reliable debounce under load: live-hub testing
+// during a status-poll burst showed more executions of reconcileMasterSwitchState() than calls
+// to requestMasterStateReconciliation() that should have produced them - unschedule() can lose
+// the race against a runInMillis() that's still registering, letting more than one timer survive.
+// A token guard makes that race harmless: every request stamps the latest token, and a stale
+// execution (from a timer unschedule() failed to cancel) checks its own token against the
+// current one and no-ops instead of doing real work, regardless of how many timers survive.
 void requestMasterStateReconciliation() {
+    Integer token = ((state.reconcileToken ?: 0) as Integer) + 1
+    state.reconcileToken = token
     try { unschedule("reconcileMasterSwitchState") } catch (Throwable t) { log.debug "unschedule(...) failed: ${t.message}" }
-    runInMillis(MASTER_RECONCILE_DEBOUNCE_MS, "reconcileMasterSwitchState")
+    runInMillis(MASTER_RECONCILE_DEBOUNCE_MS, "reconcileMasterSwitchState", [data: [token: token]])
 }
 
 @SuppressWarnings("unused")
-def reconcileMasterSwitchState() {
+def reconcileMasterSwitchState(Map data = null) {
+    Integer token = data?.token as Integer
+    if (token != null && token != (state.reconcileToken as Integer)) return
     def master = getChildDevice(fastGroupDni())
     if (master) groupChildRefresh(master)
 }
