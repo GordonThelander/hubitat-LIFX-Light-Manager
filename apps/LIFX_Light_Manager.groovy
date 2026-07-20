@@ -2036,6 +2036,13 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
     List updated = []
     List skipped = []
     List failed = []
+    // Tracks which checkbox settings to clear once their row is successfully created/updated -
+    // ticking a box means "select this for creation"; once that job is done the box should revert
+    // to unticked, not stay permanently selected. Skipped/failed rows are left ticked so a retry
+    // after fixing the underlying issue is one click away. Must match the exact uid precedence
+    // childCreationOptions() used to build the checkbox's setting name in the first place
+    // (row.id/row.uid before row.lanUid) - a different precedence would clear the wrong setting.
+    List<String> processedSelectionUids = []
 
     curated.values()
         .collect { it as Map }
@@ -2049,6 +2056,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
         }
         .each { item ->
         Map row = item as Map
+        String selectionUid = normalisedUid(row.id ?: row.uid ?: row.lanUid)
         String cloudUid = cloudUidForRow(row)
         String lanUid = lanUidForRow(row)
         String uid = lanUid ?: cloudUid
@@ -2080,6 +2088,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
                 row.childLabel = label
                 row.childStatus = "Updated"
                 updated << "${html(label)} (${html(driverType)})"
+                if (selectionUid) processedSelectionUids << selectionUid
             } else {
                 def child = addChildDevice(
                     "Hubitat Integrations",
@@ -2097,6 +2106,7 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
                 row.childLabel = label
                 row.childStatus = "Created"
                 created << "${html(label)} (${html(driverType)})"
+                if (selectionUid) processedSelectionUids << selectionUid
                 syncChildRuntimeAttributes(child, row, driverType)
                 try { child.refresh() } catch (Throwable t) { log.debug "child.refresh(...) failed: ${t.message}" }
             }
@@ -2114,6 +2124,10 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
     }
 
     atomicState.curatedRows = curated
+
+    processedSelectionUids.unique().each { uid ->
+        try { app.removeSetting(childSelectSettingName(uid)) } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
+    }
 
     List<String> sections = []
     if (created) sections << "<b>Created (${created.size()})</b><br/>${created.join('<br/>')}"
