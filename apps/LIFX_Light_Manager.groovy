@@ -1488,9 +1488,7 @@ List<Map> childCreationRows() {
         .collect { it as Map }
         .findAll { rowReadyForChild(it as Map) }
         .sort { a, b ->
-            String al = ((a as Map).label ?: "").toString().toLowerCase()
-            String bl = ((b as Map).label ?: "").toString().toLowerCase()
-            Integer cmp = al <=> bl
+            Integer cmp = compareByIp((a as Map).ip as String, (b as Map).ip as String)
             if (cmp != 0) return cmp
             return compareUid((a as Map).id ?: (a as Map).uid ?: (a as Map).lanUid, (b as Map).id ?: (b as Map).uid ?: (b as Map).lanUid)
         }

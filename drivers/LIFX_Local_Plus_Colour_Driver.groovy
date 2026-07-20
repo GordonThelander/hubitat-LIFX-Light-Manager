@@ -29,7 +29,6 @@ metadata {
         attribute "IRLevel", "number"
         attribute "infraredLevel", "number"
         command "setInfraredLevel", [[name: "Level", type: "NUMBER"]]
-        command "setIRLevel", [[name: "Level", type: "NUMBER"]]
         // Rule Machine's Custom Action has no ENUM/dropdown support for custom command
         // parameters (confirmed live) - only string/number/decimal are offered, so these are
         // typed by hand. Valid names: Soft White, White, Daylight, Warm White, Red, Orange,
@@ -174,8 +173,4 @@ def setSaturation(value) { if (!requireParent()) return; parent.childSetSaturati
 def breathe(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) { if (!requireParent()) return; parent.childBreathe(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) }
 def pulse(baseColour, targetColour, speedSeconds = null, baseBrightness = null, targetBrightness = null) { if (!requireParent()) return; parent.childPulse(device, baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) }
 
-// infraredLevel/setInfraredLevel and IRLevel/setIRLevel are two names for the same underlying
-// value, kept both for backward compatibility with existing rules/dashboards built against
-// either name. infraredLevel is the canonical one going forward; IRLevel is a deprecated alias.
 def setInfraredLevel(value) { if (!requireParent()) return; parent.childSetInfraredLevel(device, value) }
-def setIRLevel(value) { if (!requireParent()) return; parent.childSetInfraredLevel(device, value) }
