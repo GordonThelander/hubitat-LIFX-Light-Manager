@@ -1,8 +1,10 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.2
+**Version:** 1.5.5
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
+
+> **This is the `dev` branch — a private test channel.** The app and drivers here are renamed to **LIFX Light Manager (Dev)** with a separate namespace/DNI prefix, so this can be installed and tested alongside a production install on the same hub, against the same physical bulbs, without affecting production devices or automations. Aside from that naming and the version currently ahead of production, everything in this document describes the same functionality as the production release.
 
 ## What it does
 
@@ -42,10 +44,16 @@ The filenames are intentionally stable for HPM. Versioning is handled in `packag
 
 ## HPM installation
 
-Use this manifest URL in Hubitat Package Manager:
+This is the private test channel - it is not part of the official HPM curated list, so add it as a personal repository in HPM using this URL:
 
 ```text
-https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/packageManifest.json
+https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/dev/repository.json
+```
+
+That will list **LIFX Light Manager (Dev)**, whose manifest is:
+
+```text
+https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/dev/packageManifest.json
 ```
 
 Recommended repository layout:
@@ -64,7 +72,7 @@ README.md
 ## Configuration
 
 1. Install the package through HPM.
-2. Add the **LIFX Light Manager** app in Hubitat.
+2. Add the **LIFX Light Manager (Dev)** app in Hubitat.
 3. Enter your own LIFX Personal Access Token.
 4. Press **Discovery**.
 5. Wait for network discovery to complete. This typically takes 2-3 minutes, and can take longer the first time or after using Clear all Data - the app paces its LAN traffic conservatively to stay within Hubitat's own outbound command rate limits.
@@ -133,13 +141,13 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.2 |
-| App | 1.5.2 |
-| White Mono driver | 1.5.2 |
-| Tunable White driver | 1.5.2 |
-| Colour driver | 1.5.2 |
-| Plus Colour driver | 1.5.2 |
-| Master Switch driver | 1.5.2 |
+| Package | 1.5.5 |
+| App | 1.5.5 |
+| White Mono driver | 1.5.4 |
+| Tunable White driver | 1.5.4 |
+| Colour driver | 1.5.4 |
+| Plus Colour driver | 1.5.4 |
+| Master Switch driver | 1.5.4 |
 
 ## Known limitations
 
@@ -153,6 +161,10 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.5:** Fixes a canonical-identity overwrite found during external review of 1.5.4. `childDniForRow()` now prefers a row's persisted child DNI over re-deriving it from the LAN UID; previously, a row that missed a validation cycle had its LAN UID cleared for reachability reasons, which could make the DNI lookup fall back toward the Cloud UID and wrongly conclude no child was installed, allowing a later rediscovery to overwrite the canonical identity and potentially create a duplicate child device, or allowing "Remove stale saved rows" to offer to delete a row whose child device still exists. Clearing LAN fields for reachability reasons no longer blanks identity fields for a row with an installed child, only its IP and last-seen timestamp.
+
+**1.5.4:** Correctness and reliability maintenance release, verified through live-hub testing rather than static review alone. Fixed several zero-value command paths (Master defaults, Breathe/Pulse brightness, cached hue/saturation) where an explicit 0 was silently replaced by a nonzero default. Level-0 colour and colour-temperature commands now send a real power-off packet instead of just publishing an optimistic `switch: off` event while the bulb stays lit. Breathe/Pulse speed now accepts decimal seconds instead of silently falling back to the default. The Master Switch checkbox and an IP-changed row's selection no longer force themselves back to true on every page render, and child create/update no longer resets status-polling preferences to their defaults on routine updates. The Master Switch aggregate state now reconciles after individual child switch changes, including the fast local on/off path, with a debounce that stays correct under hub load. Child create/update results now report Created/Updated counts, not just Skipped/Failed. Fixed an identity-matching edge case where a device's LAN MAC can be reported two different ways depending on which response answered, which could silently orphan a row from its installed device on rediscovery. Widened Discovery's validation timing budget for larger fleets. Several smaller UI fixes: child-select checkboxes clear after a successful create/update instead of staying ticked, result messages clear after being shown once instead of persisting into a later session, create/update now picks up a pending local-name rename itself rather than requiring a separate step first, the discovered-lights list sorts by IP instead of label, and a duplicate infrared command was removed.
 
 **1.5.2:** Adds native LIFX Breathe and Pulse colour effects as Rule Machine Custom Actions on colour-capable bulbs and the Master Switch, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) above for full details.
 
