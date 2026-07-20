@@ -119,9 +119,14 @@ preferences {
 // this could delay some probes/responses past the window below, wrongly wiping a reachable
 // device's LAN data as "unconfirmed". Pacing the sends and widening the window fixes both the
 // cause and gives slower responses more room.
+//
+// Live-hub testing against a 13-device fleet showed the resulting 4.5s total budget
+// (RESEND_DELAY + FINISH_DELAY) still wasn't enough - roughly half the fleet was wrongly wiped
+// as unconfirmed in a single run despite every device being genuinely reachable. Widened further
+// to an 8s total budget.
 @Field static final Integer VALIDATION_PROBE_PACE_MS = 30
-@Field static final Integer VALIDATION_RESEND_DELAY_MS = 1500
-@Field static final Integer VALIDATION_FINISH_DELAY_MS = 3000
+@Field static final Integer VALIDATION_RESEND_DELAY_MS = 3000
+@Field static final Integer VALIDATION_FINISH_DELAY_MS = 5000
 @Field static final Integer BROADCAST_PULSE_START_DELAY_MS = 50
 @Field static final Integer BROADCAST_PULSE_INTERVAL_MS = 3000
 @Field static final Integer SWEEP_BATCH_START_DELAY_MS = 20
