@@ -44,13 +44,7 @@ The filenames are intentionally stable for HPM. Versioning is handled in `packag
 
 ## HPM installation
 
-This is the private test channel - it is not part of the official HPM curated list, so add it as a personal repository in HPM using this URL:
-
-```text
-https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/dev/repository.json
-```
-
-That will list **LIFX Light Manager (Dev)**, whose manifest is:
+This is the private test channel, not part of the official HPM curated list. Use this manifest URL in Hubitat Package Manager:
 
 ```text
 https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/dev/packageManifest.json
