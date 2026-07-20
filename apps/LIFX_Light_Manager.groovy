@@ -2439,10 +2439,15 @@ void configureBackgroundMaintenance(Boolean showResult = true) {
     }
 
     try {
-        schedule("0 0 * * * ?", "scheduledBackgroundDiscovery")
-        schedule("0 15 * * * ?", "scheduledBackgroundFirmwareCheck")
-        schedule("0 30 * * * ?", "scheduledBackgroundWifiCheck")
-        atomicState.backgroundMaintenanceResult = "Hourly background maintenance enabled: Discovery at :00, firmware check at :15, WiFi signal check at :30 past each hour."
+        // DEV BRANCH: offset +5 minutes from production's :00/:15/:30 schedule so this instance's
+        // background maintenance never fires at the same moment as production's against the same
+        // physical fleet - confirmed via live-hub testing that a simultaneous collision causes
+        // Hubitat's own "excessive hub load" throttling, which can silently drop LAN responses
+        // (including IP-change detection) mid-run.
+        schedule("0 5 * * * ?", "scheduledBackgroundDiscovery")
+        schedule("0 20 * * * ?", "scheduledBackgroundFirmwareCheck")
+        schedule("0 35 * * * ?", "scheduledBackgroundWifiCheck")
+        atomicState.backgroundMaintenanceResult = "Hourly background maintenance enabled: Discovery at :05, firmware check at :20, WiFi signal check at :35 past each hour."
     } catch (Throwable t) {
         atomicState.backgroundMaintenanceResult = "Hourly background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
         log.warn atomicState.backgroundMaintenanceResult
