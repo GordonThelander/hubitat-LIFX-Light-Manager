@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.3
+ * Version: 1.5.4
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -16,6 +16,21 @@
  * - F-06: child create/update no longer resets polling prefs to enabled/2min on every update
  * - F-07: Master Switch aggregate state now reconciles after individual child switch changes
  * - F-08: child create/update results now report Created/Updated counts, not just Skipped/Failed
+ *
+ * 1.5.4 - found and fixed during live-hub testing of the above, not part of the original report:
+ * - Identity-matching corruption: a device's LAN MAC can be reported two different ways depending
+ *   on response type, silently orphaning a row from its installed device's DNI on rediscovery
+ * - F-07 gap: the fast on/off path bypassed Master Switch reconciliation entirely
+ * - F-07 debounce over-execution: unschedule()+runInMillis() isn't atomic under hub load, could
+ *   run more executions than requests; now guarded with a token check
+ * - Validation probe timing widened (4.5s -> 8s budget) - was wrongly wiping reachable devices
+ *   as unconfirmed on a 13+ device fleet
+ * - Background maintenance schedule offset +5 minutes so parallel Dev/production instances don't
+ *   collide and overload the hub
+ * - Child-select checkboxes now clear after a successful create/update instead of staying ticked
+ * - Result messages clear after being shown once instead of persisting into later sessions
+ * - Create/update now picks up a pending local-name rename itself, not just via a separate step
+ * - Discovered-lights list sorts by IP instead of label; removed unused duplicate setIRLevel
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -59,7 +74,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.3"
+@Field static final String APP_VERSION = "1.5.4"
 
 @Field static final Integer LIFX_PORT = 56700
 

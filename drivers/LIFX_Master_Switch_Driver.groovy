@@ -1,8 +1,8 @@
 /*
  * LIFX Master Switch (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.3
- * Parent app: LIFX Light Manager (Dev) 1.5.3+
+ * Version: 1.5.4
+ * Parent app: LIFX Light Manager (Dev) 1.5.4+
  *
  * Purpose:
  * - Aggregate master switch used for fast whole-fleet LAN control.
