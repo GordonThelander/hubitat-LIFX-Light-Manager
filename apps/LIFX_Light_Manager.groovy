@@ -1320,7 +1320,20 @@ def parseLifx(response) {
         if (cloudId) {
             c.ip = ip
             c.port = LIFX_PORT
-            c.lanUid = mac
+            // Once a row has an installed child device, its lanUid is already the DNI this app
+            // committed to (lifxdev-curated-<lanUid>) - overwriting it here would silently orphan
+            // the row from its real installed device the next time a response happens to report
+            // the LIFX identity's other flavour (see findCuratedMatchForLanUid() for why a device
+            // can report two different values). Record the alternate flavour separately instead,
+            // so future responses using either flavour still match this row without ever changing
+            // which DNI it resolves to. Before installation there's no DNI to protect yet, so the
+            // row is free to keep refining its lanUid as discovery narrows in on the best match.
+            Boolean hasInstalledChild = getChildDevice(childDniForRow(c)) != null
+            if (!hasInstalledChild) {
+                c.lanUid = mac
+            } else if (normalisedUid(c.lanUid) != normalisedUid(mac)) {
+                c.lanUidAlt = mac
+            }
             c.protocolTargetUid = protocolTargetUid
             c.controlUid = protocolTargetUid
             c.cloudMatchType = cloudMatch.matchType ?: ""
@@ -3505,7 +3518,19 @@ Map findCuratedMatchForLanUid(String lanUid, Map cloud) {
     // sequential MACs. This was silently wiping a previously-confirmed device's LAN data on every
     // later Discovery run whenever that ambiguity occurred, regardless of the device's own
     // reachability.
-    Map learned = cloud.find { k, v -> normalisedUid((v as Map)?.lanUid) == lan }?.value as Map
+    //
+    // Some LIFX devices themselves report their identifying MAC two different ways depending on
+    // which response type answered (Hubitat's own sourceMac field, "often Cloud UID + 1", vs the
+    // LIFX protocol header's target field, "usually the Cloud UID" with no offset - see parseLifx()).
+    // lanUidAlt holds whichever of those two flavours isn't the confirmed primary, so a response
+    // reporting the other flavour still matches this same row instead of being treated as unmatched
+    // or silently overwriting the confirmed primary (which is what created child DNIs are built from).
+    Map learned = cloud.find { k, v ->
+        Map row = v as Map
+        String vLan = normalisedUid(row?.lanUid)
+        String vAlt = normalisedUid(row?.lanUidAlt)
+        (vLan && vLan == lan) || (vAlt && vAlt == lan)
+    }?.value as Map
     if (learned) return [cloudId: normalisedUid(learned.id ?: learned.uid ?: lan), curated: learned, matchType: "learned"]
 
     // 1. Exact match wins.
