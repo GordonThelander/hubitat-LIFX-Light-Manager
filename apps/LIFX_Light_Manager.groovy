@@ -296,18 +296,23 @@ void renderMainPageContent(Boolean advanced) {
         section("<b>Child device creation</b>") {
             paragraph atomicState.childCreateResult
         }
+        // Shown once, on the render that immediately follows the action that set it - a later,
+        // independent page open no longer shows it, so a stale result isn't mistaken for current state.
+        atomicState.childCreateResult = ""
     }
 
     if (atomicState.discoveredRenameResult) {
         section("<b>Discovered light rename</b>") {
             paragraph atomicState.discoveredRenameResult
         }
+        atomicState.discoveredRenameResult = ""
     }
 
     if (atomicState.childRenameResult) {
         section("<b>Child device rename</b>") {
             paragraph atomicState.childRenameResult
         }
+        atomicState.childRenameResult = ""
     }
 
     section("<b>Device preparation table</b>") {
@@ -333,17 +338,17 @@ void renderMainPageContent(Boolean advanced) {
                 submitOnChange: true
             input "applyStatusPollingBtn", "button", title: "Apply polling settings", submitOnChange: true
             input "pollStatusNowBtn", "button", title: "Poll status now", submitOnChange: true
-            if (atomicState.statusPollingResult) paragraph atomicState.statusPollingResult
+            if (atomicState.statusPollingResult) { paragraph atomicState.statusPollingResult; atomicState.statusPollingResult = "" }
         }
         section("<b>Firmware check</b>") {
             paragraph "Queries the LIFX LAN firmware version for every saved device with a known IP address, including devices not yet installed as child devices. Manual/on-demand only - not part of automatic Discovery."
             input "checkFirmwareBtn", "button", title: "Check firmware", submitOnChange: true
-            if (atomicState.firmwareCheckResult) paragraph atomicState.firmwareCheckResult
+            if (atomicState.firmwareCheckResult) { paragraph atomicState.firmwareCheckResult; atomicState.firmwareCheckResult = "" }
         }
         section("<b>WiFi signal check</b>") {
             paragraph "Queries the LIFX LAN WiFi signal strength for every saved device with a known IP address, including devices not yet installed as child devices. Manual/on-demand only - not part of automatic Discovery."
             input "checkWifiBtn", "button", title: "Check WiFi signal", submitOnChange: true
-            if (atomicState.wifiCheckResult) paragraph atomicState.wifiCheckResult
+            if (atomicState.wifiCheckResult) { paragraph atomicState.wifiCheckResult; atomicState.wifiCheckResult = "" }
         }
         section("<b>Background maintenance</b>") {
             paragraph "Runs Discovery, Firmware check and WiFi signal check automatically once an hour (staggered a few minutes apart), so the device table stays reasonably current without needing to open the app. On by default."
@@ -353,7 +358,7 @@ void renderMainPageContent(Boolean advanced) {
                 required: false,
                 submitOnChange: true
             input "applyBackgroundMaintenanceBtn", "button", title: "Apply background maintenance settings", submitOnChange: true
-            if (atomicState.backgroundMaintenanceResult) paragraph atomicState.backgroundMaintenanceResult
+            if (atomicState.backgroundMaintenanceResult) { paragraph atomicState.backgroundMaintenanceResult; atomicState.backgroundMaintenanceResult = "" }
         }
         section("<b>Breathe / Pulse colour effects</b>") {
             paragraph "Trigger breathe(baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) or pulse(same) as a Custom Action on any colour-capable bulb or the Master Switch - each rule types its own values (Rule Machine has no dropdown support for custom command parameters). Only the first two are required. Valid colour names: Soft White, White, Daylight, Warm White, Red, Orange, Yellow, Green, Blue, Purple, Pink (case-insensitive). Speed is a plain number of seconds (e.g. 6), leave blank for the default (3.5s breathe, 0.8s pulse). Brightness is 0-100%, leave blank for full brightness. Both run until stopped by a later command (setColor/on/off). Wide hue swings (e.g. green to red) can look choppy rather than smooth - narrower hue gaps or saturation-based pairs (e.g. White to Blue) fade more gently."
@@ -372,7 +377,7 @@ void renderMainPageContent(Boolean advanced) {
                         submitOnChange: true
                 }
             }
-            if (atomicState.rowRemovalResult) paragraph atomicState.rowRemovalResult
+            if (atomicState.rowRemovalResult) { paragraph atomicState.rowRemovalResult; atomicState.rowRemovalResult = "" }
         }
         section("<b>LIFX Cloud source table</b>") {
             paragraph cloudTableHtml()
