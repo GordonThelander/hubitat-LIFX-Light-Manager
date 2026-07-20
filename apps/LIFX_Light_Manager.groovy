@@ -1650,6 +1650,16 @@ String discoveredLightRenameSettingValue(String uidValue) {
     return value
 }
 
+// Shared between the explicit "Apply local names" action and createOrUpdateChildDevicesForUids(),
+// so a rename typed into the field but never explicitly applied still takes effect when the
+// device is created/updated, rather than silently falling back to the detected name. Caller is
+// responsible for validating newName (non-blank, length) before calling this.
+private void applyRenameToRow(Map row, String uid, String newName) {
+    row.customLabel = newName
+    row.localLabel = newName
+    try { app.updateSetting(discoveredLightRenameSettingName(uid), [type: "text", value: ""]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
+}
+
 void renameDiscoveredLightsFromSettings() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) {
@@ -1676,8 +1686,7 @@ void renameDiscoveredLightsFromSettings() {
 
         try {
             String oldDisplay = childLabelForRow(row)
-            row.customLabel = newName
-            row.localLabel = newName
+            applyRenameToRow(row, uid, newName)
             row.childStatus = row.childDni ? "Local name updated" : "Local name set"
             curated[row.id ?: row.uid ?: uid] = row
 
@@ -1690,7 +1699,6 @@ void renameDiscoveredLightsFromSettings() {
             }
 
             renamed << "${html(oldDisplay)} &rarr; ${html(childLabelForRow(row))}"
-            try { app.updateSetting(discoveredLightRenameSettingName(uid), [type: "text", value: ""]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
         } catch (Throwable t) {
             failed << "${html(row.label ?: uid)}: ${html(safeMessage(t.message))}"
         }
@@ -2062,6 +2070,11 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
         .each { item ->
         Map row = item as Map
         String selectionUid = normalisedUid(row.id ?: row.uid ?: row.lanUid)
+        // Pick up any rename typed into the field but never explicitly applied via "Apply local
+        // names" - otherwise create/update silently falls back to the detected name if that
+        // separate step was skipped or came after this click instead of before it.
+        String pendingRename = discoveredLightRenameSettingValue(selectionUid)
+        if (pendingRename && pendingRename.size() <= 80) applyRenameToRow(row, selectionUid, pendingRename)
         String cloudUid = cloudUidForRow(row)
         String lanUid = lanUidForRow(row)
         String uid = lanUid ?: cloudUid
