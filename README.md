@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.4
+**Version:** 1.5.8
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -67,7 +67,7 @@ README.md
 2. Add the **LIFX Light Manager** app in Hubitat.
 3. Enter your own LIFX Personal Access Token.
 4. Press **Discovery**.
-5. Wait for network discovery to complete. This typically takes 2-3 minutes, and can take longer the first time or after using Clear all Data - the app paces its LAN traffic conservatively to stay within Hubitat's own outbound command rate limits.
+5. Wait for network discovery to complete. This typically takes 2-3 minutes, and can take longer the first time or after using Clear saved discovery data - the app paces its LAN traffic conservatively to stay within Hubitat's own outbound command rate limits.
 6. Select the child devices to create or update.
 7. Use **Create / update selected child devices** or **Create / update all listed child devices**.
 
@@ -133,8 +133,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.4 |
-| App | 1.5.4 |
+| Package | 1.5.8 |
+| App | 1.5.8 |
 | White Mono driver | 1.5.4 |
 | Tunable White driver | 1.5.4 |
 | Colour driver | 1.5.4 |
@@ -153,6 +153,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.8:** Correctness and reliability maintenance release covering four fixes and two label changes found since 1.5.4. Fixed a canonical-identity overwrite where a device that missed a routine reachability check could have its LAN identity cleared for matching purposes, risking a later rediscovery overwriting an already-installed device's identity and creating a duplicate child, or the row-cleanup tool offering to delete a row whose device still exists - a reachability check now only clears reachability data, not identity, for a row with an installed child. LAN-discovered devices with no LIFX Cloud presence are now trackable and creatable even when the rest of the fleet's cloud connectivity is healthy, not just during a full cloud outage. The device preparation table was relabelled and restructured for clarity (`Cloud ID`, `Cloud Name`, `Current Status`, `Driver Capabilities`, with `Cloud connected` moved next to `Cloud Name` and the redundant `Capabilities` column removed). A Master Switch-only child create/update now reports success in the result message instead of only reporting failure. A detected driver mismatch no longer overwrites a row's own record of the installed driver with the one that was expected. Breathe/Pulse speed parsing now clamps before converting to milliseconds, avoiding a silent overflow on an extreme input value. Renamed "Remove stale saved rows" to "Remove rows without an installed device", and "Clear all Data" to "Clear saved discovery data" with an explicit note that installed devices are unaffected.
 
 **1.5.4:** Correctness and reliability maintenance release, verified through live-hub testing rather than static review alone. Fixed several zero-value command paths (Master defaults, Breathe/Pulse brightness, cached hue/saturation) where an explicit 0 was silently replaced by a nonzero default. Level-0 colour and colour-temperature commands now send a real power-off packet instead of just publishing an optimistic `switch: off` event while the bulb stays lit. Breathe/Pulse speed now accepts decimal seconds instead of silently falling back to the default. The Master Switch checkbox and an IP-changed row's selection no longer force themselves back to true on every page render, and child create/update no longer resets status-polling preferences to their defaults on routine updates. The Master Switch aggregate state now reconciles after individual child switch changes, including the fast local on/off path, with a debounce that stays correct under hub load. Child create/update results now report Created/Updated counts, not just Skipped/Failed. Fixed an identity-matching edge case where a device's LAN MAC can be reported two different ways depending on which response answered, which could silently orphan a row from its installed device on rediscovery. Widened Discovery's validation timing budget for larger fleets. Several smaller UI fixes: child-select checkboxes clear after a successful create/update instead of staying ticked, result messages clear after being shown once instead of persisting into a later session, create/update now picks up a pending local-name rename itself rather than requiring a separate step first, the discovered-lights list sorts by IP instead of label, and a duplicate infrared command was removed.
 

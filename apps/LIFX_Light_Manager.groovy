@@ -1,26 +1,30 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.5.4
+ * Version: 1.5.8
  *
- * 1.5.4 - correctness and reliability maintenance release:
- * - Preserve valid 0 values in level/brightness/saturation command paths
- * - Level-0 colour/CT commands now send a real SET_POWER off, not just an optimistic event
- * - Breathe/Pulse speed accepts decimal seconds (was silently ignored, fell back to default)
- * - Master Switch checkbox no longer forces itself back to true on every page render
- * - An unticked IP-changed row no longer forces itself back to selected on page reload
- * - Child create/update no longer resets polling prefs to enabled/2min on every update
- * - Master Switch aggregate state now reconciles after individual child switch changes,
- *   including the fast on/off path, with a debounce that stays correct under hub load
- * - Child create/update results now report Created/Updated counts, not just Skipped/Failed
- * - Fixed an identity-matching edge case where a device's LAN MAC can be reported two different
- *   ways depending on response type, which could silently orphan a row from its installed
- *   device on rediscovery
- * - Widened Discovery's validation timing budget for larger fleets
- * - Child-select checkboxes now clear after a successful create/update instead of staying ticked
- * - Result messages clear after being shown once instead of persisting into later sessions
- * - Create/update now picks up a pending local-name rename itself, not just via a separate step
- * - Discovered-lights list sorts by IP instead of label; removed unused duplicate setIRLevel command
+ * 1.5.8 - correctness and reliability maintenance release:
+ * - Fixed a canonical-identity overwrite: a device that missed a routine reachability check had
+ *   its LAN identity cleared for matching purposes, which could make the app wrongly conclude an
+ *   already-installed device had no child at all - risking a later rediscovery overwriting its
+ *   identity and creating a duplicate child device, or letting "Remove rows without an installed
+ *   device" offer to delete a row whose device still exists. A reachability check now only clears
+ *   reachability data (IP, last-seen), not identity, for any row with an installed child.
+ * - LAN-discovered devices with no cloud presence are now trackable and creatable even when the
+ *   rest of the fleet's cloud connectivity is healthy, not just during a full cloud outage - a
+ *   device removed from (or never added to) LIFX Cloud, while still reachable on LAN, previously
+ *   had no way to enter the saved device table unless the entire fleet lost cloud access at once.
+ * - Device preparation table relabelled/restructured for clarity: UID -> Cloud ID, Label -> Cloud
+ *   Name, Status -> Current Status, Cloud connected moved next to Cloud Name, Capabilities column
+ *   removed (redundant with Driver mode, now labelled Driver Capabilities)
+ * - Master-only create/update now reports success in the result message, not just failure
+ * - A detected driver mismatch no longer overwrites the row's own record of the installed driver
+ *   with the one that was expected, which could otherwise misdirect which bulk commands a device
+ *   receives; driver-name lookup for mismatch detection now correctly tries all of its fallbacks
+ * - Breathe/Pulse speed parsing now clamps before converting to milliseconds, avoiding a silent
+ *   overflow wraparound on an extreme input value
+ * - Renamed "Remove stale saved rows" to "Remove rows without an installed device", and "Clear all
+ *   Data" to "Clear saved discovery data" with an explicit note that installed devices are unaffected
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -30,7 +34,7 @@
  * - Source Cloud/LAN tables are runtime diagnostics only
  * - First four table columns aligned: UID, Label, IP address, Last seen
  * - LAN-only discovery can populate the saved device table when Cloud is unavailable
- * - Simplified normal UI: token field, Discovery button, device table, Clear all Data button
+ * - Simplified normal UI: token field, Discovery button, device table, Clear saved discovery data button
  * - Cloud and LAN discovery run sequentially from one Discovery button
  * - Cloud/LAN diagnostic tables are hidden behind an Advanced button
  * - Child device creation uses saved per-device checkboxes, editable prefix, corrected driver assignment, LAN UID for child DNI, and protocol target UID for control
@@ -64,7 +68,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.4"
+@Field static final String APP_VERSION = "1.5.8"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -241,7 +245,7 @@ void renderMainPageContent(Boolean advanced) {
         if ((atomicState.status ?: "idle") == "validating") {
             paragraph "<div style='font-weight:bold;color:#0066cc'>Validating existing devices...</div>"
         } else if (isDiscoveryRunning()) {
-            paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear all Data</div>"
+            paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data</div>"
         } else if ((atomicState.status ?: "idle") == "complete") {
             paragraph "<div style='font-weight:bold;color:#008000'>Discovery Complete</div>"
         }
@@ -293,7 +297,8 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "No creation-ready devices yet. Run Discovery first."
         }
 
-        input "clearAllBtn", "button", title: "Clear all Data", submitOnChange: true
+        paragraph "Resets this app's saved device-preparation table and discovery diagnostics back to empty. Installed Hubitat child devices are not affected and do not need to be recreated."
+        input "clearAllBtn", "button", title: "Clear saved discovery data", submitOnChange: true
         input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced", submitOnChange: true
     }
 
@@ -368,8 +373,8 @@ void renderMainPageContent(Boolean advanced) {
         section("<b>Breathe / Pulse colour effects</b>") {
             paragraph "Trigger breathe(baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) or pulse(same) as a Custom Action on any colour-capable bulb or the Master Switch - each rule types its own values (Rule Machine has no dropdown support for custom command parameters). Only the first two are required. Valid colour names: Soft White, White, Daylight, Warm White, Red, Orange, Yellow, Green, Blue, Purple, Pink (case-insensitive). Speed is a plain number of seconds (e.g. 6), leave blank for the default (3.5s breathe, 0.8s pulse). Brightness is 0-100%, leave blank for full brightness. Both run until stopped by a later command (setColor/on/off). Wide hue swings (e.g. green to red) can look choppy rather than smooth - narrower hue gaps or saturation-based pairs (e.g. White to Blue) fade more gently."
         }
-        section("<b>Remove stale saved rows</b>") {
-            paragraph "Rows below have no installed Hubitat child device and can be safely removed from the saved device table - for example, a device deleted from LIFX Cloud. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
+        section("<b>Remove rows without an installed device</b>") {
+            paragraph "Rows below have no installed Hubitat child device yet - either it was never created, or it was already removed from Hubitat's Devices page (for example, a device deleted from LIFX Cloud). A freshly-discovered device that simply hasn't had a child created yet will also appear here; that is expected, not a sign of a problem. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
             List<Map> removable = removableSavedRows()
             if (!removable) {
                 paragraph "No removable rows right now."
@@ -555,7 +560,7 @@ Boolean allValidationIpsConfirmed(List<String> ips) {
 void beginFullLanRediscoveryCycle() {
     atomicState.forceFullLanDiscovery = false
     atomicState.status = "cloud"
-    atomicState.phase = "Network Discovery in progress - this typically takes 2-3 minutes, and can take longer the first time or after Clear all Data, please wait for it to complete"
+    atomicState.phase = "Network Discovery in progress - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data, please wait for it to complete"
     atomicState.cloudStatus = "retrieving"
     fetchCloudLights(false)
 }
@@ -564,10 +569,17 @@ void clearLanFieldsForRow(Map row) {
     row.previousIp = row.ip ?: row.previousIp
     row.ip = ""
     row.port = row.port ?: LIFX_PORT
-    row.lanUid = ""
-    row.lanMac = ""
-    row.mac = ""
-    row.sourceMac = ""
+    // A failed reachability probe clears reachability, not durable identity. Once a row has an
+    // installed child, lanUid (and lanUidAlt) are the only things that let a later response - in
+    // whichever MAC flavour it happens to report - re-find this exact row and DNI (see
+    // findCuratedMatchForLanUid()). Blanking lanUid here would force childDniForRow() to fall back
+    // toward the Cloud UID for matching purposes and could re-orphan an already-installed device.
+    if (!getChildDevice(childDniForRow(row))) {
+        row.lanUid = ""
+        row.lanMac = ""
+        row.mac = ""
+        row.sourceMac = ""
+    }
     row.controlUid = ""
     row.protocolTargetUid = ""
     row.target = ""
@@ -1325,7 +1337,12 @@ def parseLifx(response) {
             break
     }
 
-    if (!c && (atomicState.discoveryMode ?: "cloud-led") == "lan-only") {
+    // A LAN response that matches no cloud row at all - not just "not yet disambiguated" (see the
+    // "ambiguous" matchType above) - means this device has no cloud presence, whether because the
+    // whole fleet is in lan-only mode or, just as validly, because this one device was removed from
+    // (or never added to) LIFX Cloud while the rest of the fleet's cloud connectivity is fine. Either
+    // way it should still be trackable and creatable, not silently dropped to a diagnostics-only row.
+    if (!c && cloudMatch?.matchType != "ambiguous") {
         mergeLanOnlyIntoCurated(dev)
     }
 
@@ -1478,7 +1495,7 @@ void mergeLanOnlyIntoCurated(Map dev) {
     row.driverMode = dev.driverMode ?: driverModeForProduct(dev.product)
     row.connected = row.connected
     row.lanLastSeen = now()
-    row.status = "LAN discovered - cloud unavailable/not loaded"
+    row.status = "LAN discovered - no cloud match (cloud unavailable, or this device has no cloud presence)"
     curated[uid] = row
     atomicState.curatedRows = curated
 }
@@ -1886,6 +1903,12 @@ List<String> controlUidCandidatesForRow(Map row) {
 }
 
 String childDniForRow(Map row) {
+    // Once a row has an installed child, row.childDni is the durable identity - it must win over
+    // re-deriving from lanUid, which a failed validation cycle can blank (see clearLanFieldsForRow()).
+    // Falling back to derivation here would silently point callers like the parseLifx() write-back
+    // guard and removableSavedRows() at the wrong (or a nonexistent) DNI, defeating both.
+    String persistedDni = row?.childDni?.toString()?.trim()
+    if (persistedDni) return persistedDni
     String uid = lanUidForRow(row)
     return uid ? "lifx-curated-${uid}".toString() : ""
 }
@@ -2006,10 +2029,16 @@ String normaliseDriverDisplayName(String value) {
 
 String installedDriverName(child) {
     if (!child) return ""
-    try { return child.typeName?.toString() ?: "" } catch (Throwable t) { log.debug "child lookup failed: ${t.message}" }
-    try { return child.getTypeName()?.toString() ?: "" } catch (Throwable t) { log.debug "child.getTypeName(...) failed: ${t.message}" }
-    try { return child.getDataValue('driverType')?.toString() ?: "" } catch (Throwable t) { log.debug "child.getDataValue(...) failed: ${t.message}" }
-    return ""
+    // Each fallback must only be tried when the previous one came back genuinely blank, not
+    // merely absent - `?: ""` on a null typeName previously returned "" via the Elvis operator
+    // without throwing, so the return fired immediately and the other two fallbacks were dead code.
+    String name = ""
+    try { name = child.typeName?.toString() ?: "" } catch (Throwable t) { log.debug "child.typeName lookup failed: ${t.message}" }
+    if (name) return name
+    try { name = child.getTypeName()?.toString() ?: "" } catch (Throwable t) { log.debug "child.getTypeName(...) failed: ${t.message}" }
+    if (name) return name
+    try { name = child.getDataValue('driverType')?.toString() ?: "" } catch (Throwable t) { log.debug "child.getDataValue(...) failed: ${t.message}" }
+    return name
 }
 
 Boolean rowReadyForChild(Map row) {
@@ -2095,9 +2124,12 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
             if (existing) {
                 String currentDriver = installedDriverName(existing)
                 if (currentDriver && !driverNamesEquivalent(currentDriver, driverType)) {
-                    updateChildDataValues(existing, row, driverType)
+                    // Do not push expected-driver data (updateChildDataValues) or bookkeeping onto a
+                    // child that's actually running a different driver - row.childDriver records what
+                    // is really installed, not what this row wanted, since rowIsColourCapable() and
+                    // rowSupportsColorTemperature() trust it to decide which commands are safe to send.
                     row.childDni = dni
-                    row.childDriver = driverType
+                    row.childDriver = currentDriver
                     row.childStatus = "Driver mismatch: installed ${currentDriver}; expected ${driverType}"
                     skipped << "${html(label)}: installed driver is '${html(currentDriver)}', expected '${html(driverType)}'. Hubitat cannot safely change this child driver from the parent app; delete/recreate the child or change its driver manually."
                     return
@@ -2155,17 +2187,19 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
     if (updated) sections << "<b>Updated (${updated.size()})</b><br/>${updated.join('<br/>')}"
     if (skipped) sections << "<b>Skipped (${skipped.size()})</b><br/>${skipped.join('<br/>')}"
     if (failed) sections << "<b>Failed (${failed.size()})</b><br/>${failed.join('<br/>')}"
-    String childResult = sections ? sections.join('<br/><br/>') : "No changes were required."
     if (ensureMasterSwitch) {
         createOrUpdateFastGroupChildDevice()
+        // Report the Master Switch result unconditionally, not just on failure - a successful
+        // create/update was previously silently dropped whenever no other lights were selected
+        // in the same action, leaving the UI claiming "No changes were required" despite the
+        // Master Switch actually having been created or updated.
         String masterResult = (atomicState.childCreateResult ?: "").toString()
         refreshMasterSwitchMembership()
-        if (masterResult?.toLowerCase()?.contains("failed") || masterResult?.toLowerCase()?.contains("not installed")) {
-            childResult = childResult + "<br/><br/><b>LIFX MASTER SWITCH</b><br/>" + masterResult
-        }
+        if (masterResult) sections << "<b>LIFX MASTER SWITCH</b><br/>${masterResult}"
     } else {
         refreshMasterSwitchMembership()
     }
+    String childResult = sections ? sections.join('<br/><br/>') : "No changes were required."
     if (created) {
         // Only a genuinely new child gets the default-polling treatment - an ordinary update
         // (e.g. IP resync) must not reset an already-configured polling preference.
@@ -3122,7 +3156,11 @@ Integer resolvePeriodMs(String secondsText, Integer defaultMs) {
     try {
         BigDecimal seconds = new BigDecimal(text)
         if (seconds <= 0G) return defaultMs
-        return clampInt((seconds * 1000G).intValue(), 200, 60000)
+        // Clamp in BigDecimal space before converting to Integer - BigDecimal.intValue() silently
+        // truncates/wraps on overflow instead of throwing, so an extreme input could otherwise
+        // produce an unpredictable (even negative) value before clampInt() ever got a chance to act.
+        BigDecimal ms = (seconds * 1000G).min(60000G).max(200G)
+        return clampInt(ms.intValue(), 200, 60000)
     } catch (NumberFormatException ignored) {
         return defaultMs
     }
@@ -3400,8 +3438,8 @@ String curatedTableHtml() {
     StringBuilder b = new StringBuilder()
     b << tableOpenHtml()
     b << "<tr>"
-    Map curatedHeaderKeys = ["UID":"uid", "Label":"label", "Local name":"localName", "IP address":"ip", "Last seen":"lastSeen", "Cloud connected":"connected"]
-    ["UID", "Label", "Local name", "IP address", "Last seen", "Group", "Product", "Firmware", "WiFi Signal", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
+    Map curatedHeaderKeys = ["Cloud ID":"uid", "Cloud Name":"label", "Cloud connected":"connected", "Local name":"localName", "IP address":"ip", "Last seen":"lastSeen"]
+    ["Cloud ID", "Cloud Name", "Cloud connected", "Local name", "IP address", "Last seen", "Group", "Product", "Firmware", "WiFi Signal", "Driver Capabilities", "Current Status"].eachWithIndex { h, idx ->
         b << headerCell(h, idx, curatedHeaderKeys[h])
     }
     b << "</tr>"
@@ -3409,6 +3447,7 @@ String curatedTableHtml() {
         b << "<tr>"
         b << cell(r.id ?: r.uid, 0, "uid")
         b << cell(r.label, 1, "label")
+        b << cell(r.connected == null ? "" : r.connected, null, "connected")
         b << cell(localNameForRow(r), 1, "localName")
         b << cell(r.ip, 2, "ip")
         b << cell(curatedLastSeen(r), 3, "lastSeen")
@@ -3417,9 +3456,7 @@ String curatedTableHtml() {
         b << cell(productDisplay, 5)
         b << cell(r.firmwareVersion ?: "")
         b << cell(r.wifiRssi != null ? "${r.wifiRssi} dBm" : "")
-        b << cell(r.capability ?: cloudCapability(r), 6)
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
-        b << cell(r.connected == null ? "" : r.connected, null, "connected")
         b << cell(r.status ?: (r.ip ? "LAN IP saved" : "LAN IP missing"), 9)
         b << "</tr>"
     }
@@ -3598,8 +3635,13 @@ Map findCuratedMatchForLanUid(String lanUid, Map cloud) {
         }
     }
 
-    // Do not guess if more than one adjacent candidate exists.
-    return matches.size() == 1 ? matches[0] as Map : null
+    // Do not guess if more than one adjacent candidate exists - but tell the caller this MAC is
+    // still plausibly a cloud device (just not disambiguated yet), as distinct from genuinely
+    // matching nothing at all. Callers that fall back to LAN-only tracking on a null match need
+    // that distinction so they don't mistake residual ambiguity for a device with no cloud presence.
+    if (matches.size() == 1) return matches[0] as Map
+    if (matches.size() > 1) return [cloudId: null, curated: null, matchType: "ambiguous"]
+    return null
 }
 
 Map findLanRecordForCloudId(String cloudId, Map records) {
