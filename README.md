@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.5
+**Version:** 1.5.9
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -24,7 +24,7 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table.
 - Supports optional hourly background maintenance (Discovery, firmware check, WiFi signal check) so the device table stays current without opening the app.
 - Supports native LIFX **Breathe** and **Pulse** colour effects as Rule Machine Custom Actions, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) below.
-- Driver format compatibility with Google Home that exposes device capabilities (known issue that colour has to be set once outside of Goole Home and then to use Google to change the colour manually to lock in the RGB capability)  
+- Google Home compatible via standard Hubitat capability exposure across all local drivers and the Master Switch, including full colour control.
 
 ## Components
 
@@ -69,7 +69,7 @@ README.md
 2. Add the **LIFX Light Manager (Dev)** app in Hubitat.
 3. Enter your own LIFX Personal Access Token.
 4. Press **Discovery**.
-5. Wait for network discovery to complete. This typically takes 2-3 minutes, and can take longer the first time or after using Clear all Data - the app paces its LAN traffic conservatively to stay within Hubitat's own outbound command rate limits.
+5. Wait for network discovery to complete. This typically takes 2-3 minutes, and can take longer the first time or after using Clear saved discovery data - the app paces its LAN traffic conservatively to stay within Hubitat's own outbound command rate limits.
 6. Select the child devices to create or update.
 7. Use **Create / update selected child devices** or **Create / update all listed child devices**.
 
@@ -135,13 +135,15 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.5 |
-| App | 1.5.5 |
+| Package | 1.5.9 |
+| App | 1.5.9 |
 | White Mono driver | 1.5.4 |
 | Tunable White driver | 1.5.4 |
 | Colour driver | 1.5.4 |
 | Plus Colour driver | 1.5.4 |
 | Master Switch driver | 1.5.4 |
+
+Tested on Hubitat Elevation platform version 2.5.0.159.
 
 ## Known limitations
 
@@ -155,6 +157,14 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.9:** Fixes four correctness issues confirmed during external re-review of 1.5.8. Master Switch colour commands (e.g. a plain colour change) no longer reset every Tunable White bulb's colour temperature to a hardcoded 3500K default - each bulb's own current colour temperature is preserved instead. LAN-only discovery is now reliably given a chance to find a cloud-less device on every Discovery run, rather than only when the rest of the fleet's cached state happened not to already satisfy completion tracking; LAN-only rows are also no longer miscounted as cloud-backed devices internally. A device that leaves and later rejoins LIFX Cloud now reconciles into its existing row instead of risking a duplicate row or duplicate child device. A transition-duration parsing overflow was fixed using the same safeguard applied to the Breathe/Pulse speed parser in 1.5.8.
+
+**1.5.8:** Backlog-grooming maintenance release. A Master Switch-only create/update now reports success in the result message instead of being silently dropped whenever no other lights were selected in the same action. A detected driver mismatch no longer overwrites a row's own record of the installed driver with the one that was expected. The driver-name lookup used for mismatch detection now correctly tries all of its fallbacks in turn instead of stopping at the first blank result. Breathe/Pulse speed parsing now clamps before converting to milliseconds, avoiding a silent overflow on an extreme input value. Two labels were reworded for clarity: "Remove stale saved rows" is now "Remove rows without an installed device", and "Clear all Data" is now "Clear saved discovery data" with an explicit note that installed devices are unaffected.
+
+**1.5.7:** The device preparation table was relabelled and restructured for clarity: UID is now Cloud ID, Label is now Cloud Name, Status is now Current Status, Cloud connected moved next to Cloud Name, and the Capabilities column was removed as redundant with Driver mode, which is now labelled Driver Capabilities.
+
+**1.5.6:** LAN-discovered devices with no LIFX Cloud presence are now trackable and creatable even when the rest of the fleet's cloud connectivity is healthy, not just during a full cloud outage. Previously, a device removed from (or never added to) LIFX Cloud would answer LAN discovery but never enter the saved device table unless the entire fleet's cloud fetch had failed at once.
 
 **1.5.5:** Fixes a canonical-identity overwrite found during external review of 1.5.4. `childDniForRow()` now prefers a row's persisted child DNI over re-deriving it from the LAN UID; previously, a row that missed a validation cycle had its LAN UID cleared for reachability reasons, which could make the DNI lookup fall back toward the Cloud UID and wrongly conclude no child was installed, allowing a later rediscovery to overwrite the canonical identity and potentially create a duplicate child device, or allowing "Remove stale saved rows" to offer to delete a row whose child device still exists. Clearing LAN fields for reachability reasons no longer blanks identity fields for a row with an installed child, only its IP and last-seen timestamp.
 
