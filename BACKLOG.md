@@ -20,34 +20,25 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 
 - **F-11 — Cloud snapshot rows accumulate without aging.** No successful-snapshot expiry/aging for Cloud-discovered rows. Scoped by the original report to 1.6.0; not started. Related but distinct from the 1.5.6 LAN-only fix - that made *new* cloud-less devices trackable, this is about *stale* cloud-linked rows never expiring.
 
-## Fixed, awaiting live-hub testing (1.5.9-1.5.10)
-
-Implemented and compile-checked, not yet confirmed on real hardware - see `TEST_PLAN_1.5.9.md` (covers both versions).
-
-- **Master Switch colour commands reset Tunable White bulbs' colour temperature to a hardcoded 3500K.** `sendBulkSetColorOrLevel()`'s non-colour branch now preserves each bulb's own current colour temperature (`child.currentValue('colorTemperature')`, falling back to row defaults) instead of the command's kelvin, which defaulted to 3500 on any ordinary RGB colour command. Test plan: CT-01/02.
-
-- **LAN-only discovery reliability - one root cause, three symptoms, all fixed together.** `startLanDiscovery()` no longer skips broadcasting entirely when cloud-known devices are already cached; the initial broadcast pass now guarantees a minimum listening window (`MIN_INITIAL_BROADCAST_PULSES`, ~9s) before honouring early completion, since it's the only phase that can discover a device with no cloud presence at all; the dead `forceFullLanDiscovery` flag is removed entirely; rows now carry an explicit `origin` ("cloud" vs "lan-only") so `expectedCloudLanDiscoveryCount()`/`discoveredCloudLanCount()` stop counting LAN-only rows as cloud-backed. Test plan: LAN-01/02/04.
-
-- **Potential duplicate row/child device if a LAN-only device is later re-added to LIFX Cloud.** `mergeCloudIntoCurated()` now reconciles into an existing LAN-only row (matched by exact or adjacent UID via the new `reconcilableLanOnlyKey()`) instead of creating a second, orphaned row. Test plan: LAN-03.
-
-- **`durationMs()` unbounded-overflow, same pattern as the `resolvePeriodMs()` bug fixed in 1.5.8.** Now clamps in `BigDecimal` space before the narrowing `Integer` cast. Test plan: DUR-01/02.
-
-- **1.5.10 - Master Switch colour/CT commands forced the whole fleet to one shared brightness level, found live while testing CT-01/02.** `sendBulkSetColorOrLevel()`/`sendBulkSetColorTemperature()` read `device.currentValue('level')` from the Master Switch itself and applied that single value to every bulb; when the Master's own level was null/stale, this fell back to a hardcoded 75% and silently dropped every bulb's brightness as a side effect of a pure colour or CT command - the opposite of the "level is independent" contract these functions already documented. Both now read and preserve each bulb's own `currentValue('level')` individually. Test plan: LVL-01/02/03.
-
 ## Fixed, pending backport to main
 
-`main` is at 1.5.8 locally (committed, not yet pushed to GitHub). All items below already shipped on `dev` across 1.5.5-1.5.8, live-hub tested and confirmed:
+`main` is at 1.5.8 locally (committed, not yet pushed to GitHub). All items below already shipped on `dev` across 1.5.5-1.5.10, live-hub tested and confirmed:
 
 - Canonical identity overwrite (1.5.5) - `childDniForRow()`/`clearLanFieldsForRow()` identity preservation
-- LAN-only devices uncreatable unless entire cloud fetch failed (1.5.6) - superseded in practice by the deeper discovery-reliability fix in 1.5.9 above, but the original create/track path fix still stands
+- LAN-only devices uncreatable unless entire cloud fetch failed (1.5.6) - superseded by the deeper discovery-reliability fix in 1.5.9, but the original create/track path fix still stands
 - Device preparation table relabel/restructure (1.5.7, cosmetic)
 - Master-only create/update under-reported success (1.5.8)
 - F-10 driver-mismatch branch overwrote actual metadata with expected (1.5.8)
 - F-09 `installedDriverName()` short-circuited on blank `typeName` (1.5.8)
 - `resolvePeriodMs()` unbounded overflow (1.5.8)
 - "Remove stale saved rows" / "Clear all Data" wording fixes (1.5.8)
+- Master Switch colour commands reset Tunable White bulbs' colour temperature to a hardcoded 3500K (1.5.9) - confirmed CT-01/02
+- LAN-only discovery reliability, one root cause/three symptoms - `allExpectedFound()` no longer short-circuits before a cloud-less device gets a chance, dead `forceFullLanDiscovery` flag removed, rows carry explicit `origin` so LAN-only rows stop being miscounted as cloud-backed (1.5.9) - confirmed LAN-01/02/04
+- Duplicate row/child device risk when a LAN-only device rejoins LIFX Cloud - `mergeCloudIntoCurated()` now reconciles via `reconcilableLanOnlyKey()` (1.5.9) - confirmed LAN-03
+- `durationMs()` unbounded overflow, same pattern as `resolvePeriodMs()` (1.5.9) - confirmed DUR-01, DUR-02 not independently observable live (any sufficiently large value looks identical - see test plan note)
+- Master Switch colour/CT commands forced the whole fleet to one shared (sometimes hardcoded-75%) brightness level instead of preserving each bulb's own (1.5.10) - confirmed live with two bulbs at different levels, both kept their own level through a shared colour change
 
-Full detail on each in `TEST_PLAN_1.5.8.md` and the 1.5.5-1.5.8 entries in `README.md`. 1.5.9's four items above join this list once live-hub tested.
+Full detail on each in `TEST_PLAN_1.5.8.md`, `TEST_PLAN_1.5.9.md` (covers 1.5.9 and 1.5.10), and the 1.5.5-1.5.10 entries in `README.md`.
 
 ## Explicitly not pursued
 
