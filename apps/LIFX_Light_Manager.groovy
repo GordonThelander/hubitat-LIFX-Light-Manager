@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.6
+ * Version: 1.5.7
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -57,6 +57,11 @@
  *   candidates" (returns matchType "ambiguous" for the latter) so a device that's still plausibly a
  *   cloud device pending disambiguation is not mistakenly treated as cloud-less.
  *
+ * 1.5.7 - Device preparation table relabelled/restructured per user request:
+ * - UID -> Cloud ID, Label -> Cloud Name, Status -> Current Status
+ * - Cloud connected moved from near the end to right after Cloud Name
+ * - Capabilities column removed (redundant with Driver mode); Driver mode -> Driver Capabilities
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -99,7 +104,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.6"
+@Field static final String APP_VERSION = "1.5.7"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3458,8 +3463,8 @@ String curatedTableHtml() {
     StringBuilder b = new StringBuilder()
     b << tableOpenHtml()
     b << "<tr>"
-    Map curatedHeaderKeys = ["UID":"uid", "Label":"label", "Local name":"localName", "IP address":"ip", "Last seen":"lastSeen", "Cloud connected":"connected"]
-    ["UID", "Label", "Local name", "IP address", "Last seen", "Group", "Product", "Firmware", "WiFi Signal", "Capabilities", "Driver mode", "Cloud connected", "Status"].eachWithIndex { h, idx ->
+    Map curatedHeaderKeys = ["Cloud ID":"uid", "Cloud Name":"label", "Cloud connected":"connected", "Local name":"localName", "IP address":"ip", "Last seen":"lastSeen"]
+    ["Cloud ID", "Cloud Name", "Cloud connected", "Local name", "IP address", "Last seen", "Group", "Product", "Firmware", "WiFi Signal", "Driver Capabilities", "Current Status"].eachWithIndex { h, idx ->
         b << headerCell(h, idx, curatedHeaderKeys[h])
     }
     b << "</tr>"
@@ -3467,6 +3472,7 @@ String curatedTableHtml() {
         b << "<tr>"
         b << cell(r.id ?: r.uid, 0, "uid")
         b << cell(r.label, 1, "label")
+        b << cell(r.connected == null ? "" : r.connected, null, "connected")
         b << cell(localNameForRow(r), 1, "localName")
         b << cell(r.ip, 2, "ip")
         b << cell(curatedLastSeen(r), 3, "lastSeen")
@@ -3475,9 +3481,7 @@ String curatedTableHtml() {
         b << cell(productDisplay, 5)
         b << cell(r.firmwareVersion ?: "")
         b << cell(r.wifiRssi != null ? "${r.wifiRssi} dBm" : "")
-        b << cell(r.capability ?: cloudCapability(r), 6)
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
-        b << cell(r.connected == null ? "" : r.connected, null, "connected")
         b << cell(r.status ?: (r.ip ? "LAN IP saved" : "LAN IP missing"), 9)
         b << "</tr>"
     }
