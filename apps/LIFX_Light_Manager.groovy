@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.1
+ * Version: 1.6.2
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.1"
+@Field static final String APP_VERSION = "1.6.2"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3237,7 +3237,9 @@ private void runColorEffect(Map row, device, String baseColorName, String target
     Integer baseLevel = intOrDefault(baseBrightness, 100)
     Integer targetLevel = intOrDefault(targetBrightness, 100)
     sendSetColor(row, scalePercentToLifx(base[0]), scalePercentToLifx(base[1]), scalePercentToLifx(baseLevel), baseKelvin, 0)
-    if (baseLevel > 0) sendPowerOnIfNeeded(row, device, 0)
+    // A waveform visits both endpoints, so a 0% base with a brighter target (fading in from off)
+    // still needs power-on - only skip it when the bulb is meant to stay dark the whole cycle.
+    if (baseLevel > 0 || targetLevel > 0) sendPowerOnIfNeeded(row, device, 0)
     List<Integer> payload = buildWaveformPayload(
         scalePercentToLifx(target[0]), scalePercentToLifx(target[1]),
         scalePercentToLifx(targetLevel), clampKelvin(row, target[2]), periodMs, waveform)
@@ -3253,7 +3255,11 @@ private void runColorEffect(Map row, device, String baseColorName, String target
         device?.sendEvent(name: "colorTemperature", value: baseKelvin)
         device?.sendEvent(name: "colorMode", value: "RGB")
         device?.sendEvent(name: "colorName", value: deriveColorName(base[0], base[1], baseKelvin))
-        device?.sendEvent(name: "switch", value: baseLevel > 0 ? "on" : "off")
+        // Either endpoint being bright enough to have triggered power-on above counts as "on" -
+        // and a bulb that was already on before the effect started shouldn't flip to "off" here
+        // just because this particular effect's base level happens to be 0.
+        boolean effectOn = baseLevel > 0 || targetLevel > 0 || device?.currentValue('switch') == 'on'
+        device?.sendEvent(name: "switch", value: effectOn ? "on" : "off")
     } catch (Throwable t) { log.debug "runColorEffect() sendEvent failed: ${t.message}" }
     // Marks this device so Off knows to cancel the waveform (see EFFECT_RESET_LEVEL) before
     // powering off, instead of leaving it to silently resume next time the light is turned on.
@@ -3889,7 +3895,11 @@ String driverModeForProduct(value) {
     if (p in [10,11,18,19,51,61,66,82,85,87,88,100,101]) return "Switch + level"
     if (p in [39,50,60,81,96]) return "Switch + level + colour temperature"
     if (p in [29,30,45,46,64,65,109,110,111]) return "Switch + level + colour + CT + IR"
-    return "Switch + level + colour + CT"
+    // An unmapped product ID is a genuine unknown (a future product, or even a non-light LIFX
+    // device) - don't guess full colour+CT capability from nothing. "Unknown" doesn't match any
+    // of driverTypeForRow()'s hasRealColour/ctOnly substrings, so it falls through to that
+    // function's own conservative final fallback (White Mono) instead of being promoted to Colour.
+    return "Unknown"
 }
 
 Integer safeInt(value) {
