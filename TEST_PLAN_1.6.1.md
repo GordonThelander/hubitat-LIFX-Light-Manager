@@ -9,18 +9,9 @@ live and tracked in `BACKLOG.md` under "Fixed, pending backport to main" - not r
 1. Confirm the app page subtitle reads `v1.6.1`.
 2. App-file-only - no driver changes since 1.5.17.
 
-## Mobile: device tables now scroll horizontally (originally 1.5.19, not yet confirmed)
+## Mobile: device tables now scroll horizontally (originally 1.5.19) - confirmed live 2026-07-21
 
-The Device preparation, LIFX Cloud source and LAN responses tables were getting clipped at the
-screen edge on mobile with no way to reach the remaining columns. `tableOpenHtml()` now wraps its
-`<table>` in a `<div style="overflow-x:auto">` container - the table itself is unchanged (same
-columns, same widths, same layout), it's just swipeable now instead of clipped.
-
-| # | Test | Steps | Expected |
-|---|------|-------|----------|
-| SCROLL-01 | Device preparation table scrolls horizontally on mobile | On a phone, open the app's main page and swipe left/right across the Device preparation table | The table scrolls within its own strip to reveal columns that don't fit the screen width, instead of being cut off |
-| SCROLL-02 | Advanced diagnostic tables scroll too | Open Advanced, swipe across the LIFX Cloud source table and the LAN responses table | Same scrolling behaviour on both |
-| SCROLL-03 | Desktop is unaffected | Open the app's main page on a normal desktop browser window | Tables render and look exactly as before - no visible change when the table already fits |
+SCROLL-01/02/03 all pass. Moved to `BACKLOG.md` under "Backported to main".
 
 ## Removed the unreachable "rename an installed child device" feature (originally 1.5.18, still not yet confirmed)
 
