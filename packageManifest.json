@@ -1,7 +1,7 @@
 {
   "packageName": "LIFX Light Manager (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.5.12",
+  "version": "1.5.13",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-07-21",
   "releaseNotes": "Private test channel tracking the dev branch. Installs alongside the production LIFX Light Manager app under a separate namespace/DNI prefix so it can be tested against real hardware without touching production devices or automations. Not for general installation.",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.5.12"
+      "version": "1.5.13"
     }
   ],
   "drivers": [
@@ -40,7 +40,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/dev/drivers/LIFX_Local_Colour_Driver.groovy",
       "required": true,
-      "version": "1.5.4"
+      "version": "1.5.5"
     },
     {
       "id": "85df1abd-281e-48f4-ae45-5038aa532c9a",
@@ -48,7 +48,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/dev/drivers/LIFX_Local_Plus_Colour_Driver.groovy",
       "required": true,
-      "version": "1.5.4"
+      "version": "1.5.5"
     },
     {
       "id": "2a886eee-fcb4-439f-90ad-74f125e91961",

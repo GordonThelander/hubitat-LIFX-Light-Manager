@@ -1,8 +1,11 @@
 /*
  * LIFX Local Colour (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.4
- * Parent app: LIFX Light Manager (Dev) 1.5.4+
+ * Version: 1.5.5
+ * Parent app: LIFX Light Manager (Dev) 1.5.13+
+ * 1.5.5 - fastPower() off now cancels an active Breathe/Pulse effect (SET_COLOR reset to
+ * 75%/3000K) before the power-off packet, instead of letting the effect resume on next on -
+ * see 1.5.13 notes in the parent app for the full explanation.
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -86,6 +89,36 @@ private void fastPower(String value) {
     }
     Integer power = (value == 'on') ? 65535 : 0
 
+    if (value == 'off' && getDataValue('effectActive') == 'true') {
+        // A running Breathe/Pulse waveform survives a plain LIFX power cycle - only a real
+        // SET_COLOR command cancels it. Reset to a sane default colour/level before the power-off
+        // packet below, so the bulb comes back to normal next time it's turned on instead of
+        // silently resuming the effect. Values match EFFECT_RESET_LEVEL/EFFECT_RESET_KELVIN in the
+        // parent app; 49151 is 75% on LIFX's 0-65535 brightness scale.
+        String colorPacket = fastSetColorPacketHex(0, 0, 49151, 3000, 0)
+        sendHubCommand(new hubitat.device.HubAction(
+            colorPacket,
+            hubitat.device.Protocol.LAN,
+            [
+                type: hubitat.device.HubAction.Type.LAN_TYPE_UDPCLIENT,
+                destinationAddress: "${ip}:${lifxPort()}",
+                encoding: hubitat.device.HubAction.Encoding.HEX_STRING,
+                ignoreWarning: true,
+                parseWarning: false,
+                ignoreResponse: true,
+                timeout: 1
+            ]
+        ))
+        try {
+            sendEvent(name: "hue", value: 0, displayed: false)
+            sendEvent(name: "saturation", value: 0, displayed: false)
+            sendEvent(name: "level", value: 75, displayed: false)
+            sendEvent(name: "colorTemperature", value: 3000, displayed: false)
+            sendEvent(name: "colorMode", value: "CT", displayed: false)
+        } catch (Throwable t) { log.debug "fastPower() effect-reset sendEvent failed: ${t.message}" }
+        try { updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "fastPower() updateDataValue failed: ${t.message}" }
+    }
+
     // v1.1.6: build the zero-target/tagged SET_POWER packet inside the child driver; sequence uses driver state, not java.lang.System.
     // This removes one parent-app round-trip per child command when Hubitat Rule Machine
     // invokes a group of individual child devices sequentially.
@@ -114,6 +147,11 @@ private void fastPower(String value) {
 private String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
     List<Integer> payload = u16le(power ?: 0) + u32le(durationMs ?: 0)
     return buildZeroTargetTaggedPacket(117, payload)
+}
+
+private String fastSetColorPacketHex(Integer hue, Integer saturation, Integer brightness, Integer kelvin, Integer durationMs = 0) {
+    List<Integer> payload = [0] + u16le(hue ?: 0) + u16le(saturation ?: 0) + u16le(brightness ?: 0) + u16le(kelvin ?: 0) + u32le(durationMs ?: 0)
+    return buildZeroTargetTaggedPacket(102, payload)
 }
 
 private String buildZeroTargetTaggedPacket(Integer messageType, List<Integer> payload = []) {

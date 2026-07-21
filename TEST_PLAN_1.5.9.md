@@ -1,17 +1,20 @@
-# 1.5.9-1.5.12 correctness patches - live-hub test plan
+# 1.5.9-1.5.13 correctness patches - live-hub test plan
 
 Covers the four correctness fixes confirmed during external re-review of 1.5.8 (1.5.9), a per-bulb
 Master Switch brightness fix found live while testing CT-01/CT-02 (1.5.10), the same brightness
-problem fixed for individual bulbs' own colour picker (1.5.11), and a Breathe/Pulse switch-state fix
-found live testing (1.5.12). Everything here runs against the **"(Dev)" app and drivers**, so there
+problem fixed for individual bulbs' own colour picker (1.5.11), a Breathe/Pulse switch-state fix
+found live testing (1.5.12), and Off now cancelling an active Breathe/Pulse effect instead of
+letting it resume (1.5.13). Everything here runs against the **"(Dev)" app and drivers**, so there
 is no risk to the production app or its child devices.
 
 ## Setup
 
-1. Upload the updated `apps/LIFX_Light_Manager.groovy` to Hubitat (no driver files changed in this
-   patch).
-2. Confirm the app page subtitle reads `v1.5.12`.
-3. Have at least one Tunable White device installed (for CT-01/02), ideally at least two devices at
+1. Upload the updated `apps/LIFX_Light_Manager.groovy` to Hubitat.
+2. **1.5.13 also changes two driver files** - unlike 1.5.9-1.5.12, this release is not app-file-only.
+   Upload `drivers/LIFX_Local_Colour_Driver.groovy` and `drivers/LIFX_Local_Plus_Colour_Driver.groovy`
+   too. The other three driver files (White Mono, Tunable White, Master Switch) are unchanged.
+3. Confirm the app page subtitle reads `v1.5.13`.
+4. Have at least one Tunable White device installed (for CT-01/02), ideally at least two devices at
    *different* brightness levels from each other (for LVL-01/02), and ideally one device you can
    delete from/re-add to LIFX Cloud (for LAN-03) - the same kind of test used for the 1.5.6 LAN-only
    verification.
@@ -84,5 +87,23 @@ On does not (the effect resumes once power is restored). Not addressed in this r
 |---|------|-------|----------|
 | BRTH-01 | Switch attribute updates when a Breathe/Pulse effect starts | Trigger `breathe()` or `pulse()` on a device that's currently off | Hubitat's `switch` attribute shows "on" (and hue/saturation/level/colorMode reflect the base colour), not stuck on "off" |
 | BRTH-02 | Master Switch reflects the change | Same as BRTH-01, then check the Master Switch's own aggregate state | Master Switch's switch state updates to reflect this member now being on |
-| BRTH-03 | Off then On resumes the effect (confirms understanding, not a new bug) | Start a Breathe/Pulse effect, turn the device Off, then On again | The effect resumes automatically - this is expected LIFX protocol behaviour, not something this release changes |
+| BRTH-03 | Off then On resumed the effect in 1.5.12 (superseded by RESET-01/02 below in 1.5.13) | Start a Breathe/Pulse effect, turn the device Off, then On again | As of 1.5.12 the effect resumed automatically - this was expected LIFX protocol behaviour at the time; 1.5.13 changes this, see below |
 | BRTH-04 | Setting level or colour still stops the effect | Start a Breathe/Pulse effect, then change level or set a plain colour | Effect stops, light shows the requested level/colour - unchanged from before |
+
+## Off cancels an active Breathe/Pulse effect (1.5.13, Gordon's proposed fix)
+
+`SET_POWER` off never cancelled an active `SET_WAVEFORM` effect on the bulb (confirmed LIFX
+protocol behaviour, see 1.5.12 notes above) - only a real `SET_COLOR` command does. `runColorEffect()`
+now sets an `effectActive` device data flag when starting an effect; `childOff()`/`sendBulkSetPower()`
+(app-level) and the individual driver's own `fastPower()` (device-level fast path, used by the
+physical device tile, Dashboard, Google Home, and most Rule Machine actions) all check the flag on
+off and, if set, send a real `SET_COLOR` reset to 75%/3000K before the power-off packet, instead of
+just `SET_POWER`. Conditional on the flag, not unconditional - a bulb sitting at a normal custom
+colour that was never running an effect keeps that colour through an ordinary off/on cycle.
+
+| # | Test | Steps | Expected |
+|---|------|-------|----------|
+| RESET-01 | Off then On no longer resumes the effect, triggered from the app | Start `breathe()` or `pulse()` on an individual device via the app/a Rule Machine custom action, then send `off()` via the same app-level path, then `on()` | Light comes back at a plain 75%/3000K, not breathing/pulsing |
+| RESET-02 | Off then On no longer resumes the effect, triggered from the device's own tile/Dashboard | Same as RESET-01, but turn the device off using its own Hubitat device page toggle, a Dashboard tile, or Google Home - not an app-triggered command | Same result - light comes back at 75%/3000K, not resumed. This specifically exercises the driver-level `fastPower()` fix, which is the path most physical off-switch interactions actually take |
+| RESET-03 | Master Switch bulk off also cancels effects | Start an effect on one member bulb, then turn the whole fleet off via the Master Switch, then back on individually | The bulb that was breathing/pulsing comes back at 75%/3000K, not resumed; other bulbs unaffected |
+| RESET-04 | Normal colour is preserved through an ordinary off/on cycle (no regression) | Set a bulb to a specific custom colour (not via an effect), turn it off, turn it back on | Bulb returns to the same colour it was set to - the reset-on-off behaviour only triggers when an effect was actually active |

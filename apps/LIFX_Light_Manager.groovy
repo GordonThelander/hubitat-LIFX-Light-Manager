@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.12
+ * Version: 1.5.13
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -145,6 +145,22 @@
  *   resumes once power is restored). Not addressed here - see BACKLOG.md for the open question of
  *   whether Off should also explicitly cancel an active effect.
  *
+ * 1.5.13 - Off now cancels an active Breathe/Pulse effect instead of letting it resume:
+ * - runColorEffect() sets a new effectActive device data value when starting an effect.
+ * - childOff() and sendBulkSetPower() (Master Switch bulk off) check the flag: if set, they send a
+ *   real SET_COLOR reset (EFFECT_RESET_LEVEL 75% / EFFECT_RESET_KELVIN 3000K) before the power-off
+ *   packet, publish matching hue/saturation/level/colorTemperature/colorMode events, and clear the
+ *   flag - so the bulb comes back to a sane default next time it's turned on instead of silently
+ *   resuming the effect. Conditional rather than unconditional, so a bulb sitting at a normal custom
+ *   colour (never involved in an effect) keeps that colour through an ordinary off/on cycle.
+ * - The individual local driver's own on()/off() commands (LIFX Local Colour, LIFX Local Plus
+ *   Colour) call fastPower() directly, which bypasses the parent app entirely for speed - including
+ *   childOff(). The app-level fix alone would miss this path (the physical device tile, Dashboard,
+ *   Google Home, and most Rule Machine actions all go through it), so fastPower() got the identical
+ *   conditional reset-then-off treatment. LIFX Local White Mono and LIFX Local Tunable White don't
+ *   declare breathe/pulse commands, so they're unaffected; LIFX Master Switch's off() already
+ *   delegates to the app's own groupChildOff(), so it needed no separate change.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -187,7 +203,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.12"
+@Field static final String APP_VERSION = "1.5.13"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -217,6 +233,15 @@ preferences {
 // (confirmed live), so the speed override is typed as a plain number of seconds in a STRING field.
 @Field static final Integer BREATHE_PERIOD_MS = 3500
 @Field static final Integer PULSE_PERIOD_MS = 800
+
+// A running Breathe/Pulse waveform survives a plain LIFX power cycle - only a real SET_COLOR
+// command cancels it (confirmed live). Off checks the "effectActive" data value set by
+// runColorEffect() and, only when set, sends this sane default colour/level (cancelling the
+// waveform) before the power-off packet, so the bulb comes back to a normal state next time it's
+// turned on instead of silently resuming the effect. A plain Off on a device with no active effect
+// is completely unaffected by this - it stays exactly as before, colour/level untouched.
+@Field static final Integer EFFECT_RESET_LEVEL = 75
+@Field static final Integer EFFECT_RESET_KELVIN = 3000
 
 // Named colour presets for Breathe/Pulse base/target colours, passed as plain ENUM command
 // parameters (each rule picks its own pair directly) rather than read from a shared device -
@@ -2954,6 +2979,29 @@ String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
 void sendBulkSetPower(Integer power, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
+
+    if ((power ?: 0) <= 0) {
+        // See childOff()/EFFECT_RESET_LEVEL: any fleet member currently running a Breathe/Pulse
+        // waveform needs it cancelled with a real SET_COLOR first, or it'll silently resume next
+        // time it's powered back on. Only touches rows actually mid-effect - everything else in
+        // this bulk-off pass is completely unaffected.
+        List<Integer> resetPayload = buildHsbkPayload(0, 0, scalePercentToLifx(EFFECT_RESET_LEVEL), EFFECT_RESET_KELVIN, 0)
+        rows.each { row ->
+            def child = getChildDevice(childDniForBulkRow(row as Map))
+            if (child && (child.getDataValue("effectActive") ?: "false") == "true") {
+                sendFastSetToRow(row as Map, LIFX_MSG.LIGHT_SET_COLOR, resetPayload)
+                try {
+                    child.sendEvent(name: "hue", value: 0)
+                    child.sendEvent(name: "saturation", value: 0)
+                    child.sendEvent(name: "level", value: EFFECT_RESET_LEVEL)
+                    child.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
+                    child.sendEvent(name: "colorMode", value: "CT")
+                } catch (Throwable t) { log.debug "sendBulkSetPower() effect-reset sendEvent failed: ${t.message}" }
+                try { child.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "sendBulkSetPower() updateDataValue failed: ${t.message}" }
+            }
+        }
+    }
+
     List<Integer> payload = buildSetPowerPayload(power, durationMs)
 
     // v4.7.3: app/fast-group power switching uses the original Rob Heyes style fast path:
@@ -3199,6 +3247,20 @@ void childOn(device) {
 
 void childOff(device) {
     Map row = rowForManagedChild(device)
+    if ((device?.getDataValue("effectActive") ?: "false") == "true") {
+        // See EFFECT_RESET_LEVEL: cancel the running waveform with a real SET_COLOR before the
+        // power-off packet, so it doesn't silently resume next time the light is turned on.
+        List<Integer> resetPayload = buildHsbkPayload(0, 0, scalePercentToLifx(EFFECT_RESET_LEVEL), EFFECT_RESET_KELVIN, 0)
+        sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, resetPayload)
+        try {
+            device.sendEvent(name: "hue", value: 0)
+            device.sendEvent(name: "saturation", value: 0)
+            device.sendEvent(name: "level", value: EFFECT_RESET_LEVEL)
+            device.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
+            device.sendEvent(name: "colorMode", value: "CT")
+        } catch (Throwable t) { log.debug "childOff() effect-reset sendEvent failed: ${t.message}" }
+        try { device.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "childOff() updateDataValue failed: ${t.message}" }
+    }
     sendSetPower(row, LIFX_FULL_OFF, 0)
     try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
     requestMasterStateReconciliation()
@@ -3384,6 +3446,9 @@ private void runColorEffect(Map row, device, String baseColorName, String target
         device?.sendEvent(name: "colorMode", value: "RGB")
         device?.sendEvent(name: "switch", value: baseLevel > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "runColorEffect() sendEvent failed: ${t.message}" }
+    // Marks this device so Off knows to cancel the waveform (see EFFECT_RESET_LEVEL) before
+    // powering off, instead of leaving it to silently resume next time the light is turned on.
+    try { device?.updateDataValue("effectActive", "true") } catch (Throwable t) { log.debug "runColorEffect() updateDataValue failed: ${t.message}" }
     requestMasterStateReconciliation()
 }
 

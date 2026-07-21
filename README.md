@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.12
+**Version:** 1.5.13
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -135,12 +135,12 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.12 |
-| App | 1.5.12 |
+| Package | 1.5.13 |
+| App | 1.5.13 |
 | White Mono driver | 1.5.4 |
 | Tunable White driver | 1.5.4 |
-| Colour driver | 1.5.4 |
-| Plus Colour driver | 1.5.4 |
+| Colour driver | 1.5.5 |
+| Plus Colour driver | 1.5.5 |
 | Master Switch driver | 1.5.4 |
 
 Tested on Hubitat Elevation platform version 2.5.0.159.
@@ -157,6 +157,8 @@ Tested on Hubitat Elevation platform version 2.5.0.159.
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.13:** Turning a breathing/pulsing light off and back on no longer resumes the effect. `SET_POWER` off doesn't cancel an active LIFX waveform effect on the bulb, only a real colour command does, so Off now sends a colour reset (to a plain 75%/3000K) before powering off, but only when an effect was actually running - an ordinary light at a normal custom colour keeps that colour through a regular off/on cycle. This applies both to app-triggered Off and to the individual driver's own on/off, which is the path used by the physical device tile, Dashboard, Google Home and most Rule Machine actions, since that path talks to the bulb directly for speed rather than going through the app. Requires re-uploading the Colour and Plus Colour driver files (now 1.5.5) alongside the app.
 
 **1.5.12:** Fixes Breathe/Pulse never updating Hubitat's own switch/colour state when an effect started - the bulb was genuinely powered on and actively breathing or pulsing, but Hubitat's switch attribute stayed showing "off," and the Master Switch's own aggregate state didn't pick up the change either. Both now update correctly. Also confirmed (not a bug, LIFX protocol behaviour): turning a breathing/pulsing light off and back on resumes the effect, since a plain power command doesn't cancel it - only changing the level or colour does.
 

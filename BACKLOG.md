@@ -1,13 +1,10 @@
 # Backlog
 
-Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.12 (`dev`), verified against code, not taken on any reviewer's word.
+Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.13 (`dev`), verified against code, not taken on any reviewer's word.
 
 ## Open — enhancement ideas
 
 Feature/design suggestions, not bugs - not yet decided whether to pursue.
-
-- **Off doesn't cancel an active Breathe/Pulse waveform effect - the effect resumes when the light is turned back on.**
-  Found live 2026-07-21, confirmed as LIFX protocol behaviour rather than a packet-building bug: `SET_POWER` off only suppresses the bulb's visible output, it does not cancel a `SET_WAVEFORM` effect already running on the bulb - only a real `SET_COLOR` command does (which is why changing level/colour does stop an effect, per the 1.5.12 fix's test notes). `childOff()`/`sendSetPower()` only send `SET_POWER`, so a user who explicitly turns a breathing light off, then on again, gets the effect back, likely unexpectedly. Possible fix: have Off also send a `SET_COLOR` (using the device's own last-known colour) to explicitly cancel any active waveform - trade-off is an extra packet on every single Off command (even when no effect is running, since the app doesn't currently track "is an effect active" as state), or added state-tracking complexity to only send it conditionally.
 
 - **Master Switch bulk commands are genuinely sequential unicast, not broadcast - real "popcorning" risk on larger fleets.**
   `apps/LIFX_Light_Manager.groovy:2976-2991` (`sendFastUdpToIp()`): every bulk command loop sends one unicast UDP packet per device via `destinationAddress: "${row.ip}:${port}"`, confirmed not a single broadcast send. LIFX tagged broadcast packets would synchronize the whole fleet's transition instead of a visible ripple. Trade-off worth weighing before pursuing: this app already caused one real hub crash from LAN traffic overload earlier in development, with substantial pacing work done since specifically to avoid a repeat - a tagged broadcast packet is processed by *every* LIFX device on the LAN, not just this app's managed ones, a different reliability/rate profile than the current tuned-against-a-real-incident approach.
@@ -22,6 +19,10 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 ## Deferred by design (from the original F-01-F-12 report, not re-litigated)
 
 - **F-11 — Cloud snapshot rows accumulate without aging.** No successful-snapshot expiry/aging for Cloud-discovered rows. Scoped by the original report to 1.6.0; not started. Related but distinct from the 1.5.6 LAN-only fix - that made *new* cloud-less devices trackable, this is about *stale* cloud-linked rows never expiring.
+
+## Fixed, awaiting live-hub testing (1.5.13)
+
+- **Off doesn't cancel an active Breathe/Pulse waveform effect - the effect resumes when the light is turned back on.** Found live 2026-07-21, confirmed as LIFX protocol behaviour rather than a packet-building bug: `SET_POWER` off only suppresses the bulb's visible output, it does not cancel a `SET_WAVEFORM` effect already running on the bulb - only a real `SET_COLOR` command does. Fixed per Gordon's proposed design (refined to be conditional, not unconditional, to avoid a regression where a bulb sitting at a normal custom colour would lose it on every off): `runColorEffect()` sets a new `effectActive` device data flag when starting an effect; `childOff()`/`sendBulkSetPower()` in the app, AND the individual driver's own `fastPower()` fast path (`LIFX_Local_Colour_Driver.groovy`, `LIFX_Local_Plus_Colour_Driver.groovy` - the driver's `on()`/`off()` bypass the parent app entirely for speed, so the app-level fix alone would miss the physical device tile/Dashboard/Google Home/most Rule Machine actions) all check the flag and send a real `SET_COLOR` reset to 75%/3000K before powering off. `LIFX_Local_White_Mono_Driver.groovy`/`LIFX_Local_Tunable_White_Driver.groovy` don't declare breathe/pulse so are unaffected; `LIFX_Master_Switch_Driver.groovy`'s `off()` already delegates to the app's `groupChildOff()` so needed no change. Test plan: RESET-01/02/03/04 in `TEST_PLAN_1.5.9.md`.
 
 ## Fixed, awaiting live-hub testing (1.5.12)
 
