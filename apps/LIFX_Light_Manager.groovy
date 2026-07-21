@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.7
+ * Version: 1.5.8
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -62,6 +62,26 @@
  * - Cloud connected moved from near the end to right after Cloud Name
  * - Capabilities column removed (redundant with Driver mode); Driver mode -> Driver Capabilities
  *
+ * 1.5.8 - backlog grooming pass, four correctness fixes plus two wording-only fixes:
+ * - Master-only create/update now reports success too, not just failure - previously a successful
+ *   Master Switch create/update was silently dropped from the result message whenever no other
+ *   lights were selected in the same action, leaving a misleading "No changes were required".
+ * - F-10: the driver-mismatch branch no longer pushes expected-driver data values onto a child
+ *   that's actually running a different driver, and row.childDriver now records what's actually
+ *   installed - previously both were set to the expected (wrong) driver type, which could make
+ *   rowIsColourCapable()/rowSupportsColorTemperature() send unsupported commands to that device.
+ * - F-09: installedDriverName()'s three fallbacks (typeName, getTypeName(), driverType data value)
+ *   now correctly try each one in turn - previously a blank typeName returned "" immediately via
+ *   the Elvis operator without throwing, so the other two fallbacks were unreachable dead code.
+ * - resolvePeriodMs() now clamps in BigDecimal space before converting to Integer, since
+ *   BigDecimal.intValue() silently wraps on overflow instead of throwing; an extreme numeric
+ *   string in the Breathe/Pulse speed field could previously produce an unpredictable result.
+ * - "Remove stale saved rows" renamed to "Remove rows without an installed device", with wording
+ *   that leads with "not yet installed" instead of implying orphaned/outdated - a perfectly
+ *   healthy freshly-discovered fleet with no children created yet showed up here in its entirety.
+ * - "Clear all Data" renamed to "Clear saved discovery data" with an explicit note that installed
+ *   Hubitat child devices are not affected - the old name read as if it could delete real devices.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -70,7 +90,7 @@
  * - Source Cloud/LAN tables are runtime diagnostics only
  * - First four table columns aligned: UID, Label, IP address, Last seen
  * - LAN-only discovery can populate the saved device table when Cloud is unavailable
- * - Simplified normal UI: token field, Discovery button, device table, Clear all Data button
+ * - Simplified normal UI: token field, Discovery button, device table, Clear saved discovery data button
  * - Cloud and LAN discovery run sequentially from one Discovery button
  * - Cloud/LAN diagnostic tables are hidden behind an Advanced button
  * - Child device creation uses saved per-device checkboxes, editable prefix, corrected driver assignment, LAN UID for child DNI, and protocol target UID for control
@@ -104,7 +124,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.7"
+@Field static final String APP_VERSION = "1.5.8"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -281,7 +301,7 @@ void renderMainPageContent(Boolean advanced) {
         if ((atomicState.status ?: "idle") == "validating") {
             paragraph "<div style='font-weight:bold;color:#0066cc'>Validating existing devices...</div>"
         } else if (isDiscoveryRunning()) {
-            paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear all Data</div>"
+            paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data</div>"
         } else if ((atomicState.status ?: "idle") == "complete") {
             paragraph "<div style='font-weight:bold;color:#008000'>Discovery Complete</div>"
         }
@@ -333,7 +353,8 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "No creation-ready devices yet. Run Discovery first."
         }
 
-        input "clearAllBtn", "button", title: "Clear all Data", submitOnChange: true
+        paragraph "Resets this app's saved device-preparation table and discovery diagnostics back to empty. Installed Hubitat child devices are not affected and do not need to be recreated."
+        input "clearAllBtn", "button", title: "Clear saved discovery data", submitOnChange: true
         input "advancedBtn", "button", title: advanced ? "Hide advanced" : "Advanced", submitOnChange: true
     }
 
@@ -408,8 +429,8 @@ void renderMainPageContent(Boolean advanced) {
         section("<b>Breathe / Pulse colour effects</b>") {
             paragraph "Trigger breathe(baseColour, targetColour, speedSeconds, baseBrightness, targetBrightness) or pulse(same) as a Custom Action on any colour-capable bulb or the Master Switch - each rule types its own values (Rule Machine has no dropdown support for custom command parameters). Only the first two are required. Valid colour names: Soft White, White, Daylight, Warm White, Red, Orange, Yellow, Green, Blue, Purple, Pink (case-insensitive). Speed is a plain number of seconds (e.g. 6), leave blank for the default (3.5s breathe, 0.8s pulse). Brightness is 0-100%, leave blank for full brightness. Both run until stopped by a later command (setColor/on/off). Wide hue swings (e.g. green to red) can look choppy rather than smooth - narrower hue gaps or saturation-based pairs (e.g. White to Blue) fade more gently."
         }
-        section("<b>Remove stale saved rows</b>") {
-            paragraph "Rows below have no installed Hubitat child device and can be safely removed from the saved device table - for example, a device deleted from LIFX Cloud. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
+        section("<b>Remove rows without an installed device</b>") {
+            paragraph "Rows below have no installed Hubitat child device yet - either it was never created, or it was already removed from Hubitat's Devices page (for example, a device deleted from LIFX Cloud). A freshly-discovered device that simply hasn't had a child created yet will also appear here; that is expected, not a sign of a problem. Rows with an installed child device are not listed here; remove the child device from Hubitat's Devices page first if one of those needs clearing."
             List<Map> removable = removableSavedRows()
             if (!removable) {
                 paragraph "No removable rows right now."
@@ -595,7 +616,7 @@ Boolean allValidationIpsConfirmed(List<String> ips) {
 void beginFullLanRediscoveryCycle() {
     atomicState.forceFullLanDiscovery = false
     atomicState.status = "cloud"
-    atomicState.phase = "Network Discovery in progress - this typically takes 2-3 minutes, and can take longer the first time or after Clear all Data, please wait for it to complete"
+    atomicState.phase = "Network Discovery in progress - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data, please wait for it to complete"
     atomicState.cloudStatus = "retrieving"
     fetchCloudLights(false)
 }
@@ -2064,10 +2085,16 @@ String normaliseDriverDisplayName(String value) {
 
 String installedDriverName(child) {
     if (!child) return ""
-    try { return child.typeName?.toString() ?: "" } catch (Throwable t) { log.debug "child lookup failed: ${t.message}" }
-    try { return child.getTypeName()?.toString() ?: "" } catch (Throwable t) { log.debug "child.getTypeName(...) failed: ${t.message}" }
-    try { return child.getDataValue('driverType')?.toString() ?: "" } catch (Throwable t) { log.debug "child.getDataValue(...) failed: ${t.message}" }
-    return ""
+    // Each fallback must only be tried when the previous one came back genuinely blank, not
+    // merely absent - `?: ""` on a null typeName previously returned "" via the Elvis operator
+    // without throwing, so the return fired immediately and the other two fallbacks were dead code.
+    String name = ""
+    try { name = child.typeName?.toString() ?: "" } catch (Throwable t) { log.debug "child.typeName lookup failed: ${t.message}" }
+    if (name) return name
+    try { name = child.getTypeName()?.toString() ?: "" } catch (Throwable t) { log.debug "child.getTypeName(...) failed: ${t.message}" }
+    if (name) return name
+    try { name = child.getDataValue('driverType')?.toString() ?: "" } catch (Throwable t) { log.debug "child.getDataValue(...) failed: ${t.message}" }
+    return name
 }
 
 Boolean rowReadyForChild(Map row) {
@@ -2153,9 +2180,12 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
             if (existing) {
                 String currentDriver = installedDriverName(existing)
                 if (currentDriver && !driverNamesEquivalent(currentDriver, driverType)) {
-                    updateChildDataValues(existing, row, driverType)
+                    // Do not push expected-driver data (updateChildDataValues) or bookkeeping onto a
+                    // child that's actually running a different driver - row.childDriver records what
+                    // is really installed, not what this row wanted, since rowIsColourCapable() and
+                    // rowSupportsColorTemperature() trust it to decide which commands are safe to send.
                     row.childDni = dni
-                    row.childDriver = driverType
+                    row.childDriver = currentDriver
                     row.childStatus = "Driver mismatch: installed ${currentDriver}; expected ${driverType}"
                     skipped << "${html(label)}: installed driver is '${html(currentDriver)}', expected '${html(driverType)}'. Hubitat cannot safely change this child driver from the parent app; delete/recreate the child or change its driver manually."
                     return
@@ -2213,17 +2243,19 @@ void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "
     if (updated) sections << "<b>Updated (${updated.size()})</b><br/>${updated.join('<br/>')}"
     if (skipped) sections << "<b>Skipped (${skipped.size()})</b><br/>${skipped.join('<br/>')}"
     if (failed) sections << "<b>Failed (${failed.size()})</b><br/>${failed.join('<br/>')}"
-    String childResult = sections ? sections.join('<br/><br/>') : "No changes were required."
     if (ensureMasterSwitch) {
         createOrUpdateFastGroupChildDevice()
+        // Report the Master Switch result unconditionally, not just on failure - a successful
+        // create/update was previously silently dropped whenever no other lights were selected
+        // in the same action, leaving the UI claiming "No changes were required" despite the
+        // Master Switch actually having been created or updated.
         String masterResult = (atomicState.childCreateResult ?: "").toString()
         refreshMasterSwitchMembership()
-        if (masterResult?.toLowerCase()?.contains("failed") || masterResult?.toLowerCase()?.contains("not installed")) {
-            childResult = childResult + "<br/><br/><b>LIFX MASTER SWITCH</b><br/>" + masterResult
-        }
+        if (masterResult) sections << "<b>LIFX MASTER SWITCH</b><br/>${masterResult}"
     } else {
         refreshMasterSwitchMembership()
     }
+    String childResult = sections ? sections.join('<br/><br/>') : "No changes were required."
     if (created) {
         // Only a genuinely new child gets the default-polling treatment - an ordinary update
         // (e.g. IP resync) must not reset an already-configured polling preference.
@@ -3185,7 +3217,11 @@ Integer resolvePeriodMs(String secondsText, Integer defaultMs) {
     try {
         BigDecimal seconds = new BigDecimal(text)
         if (seconds <= 0G) return defaultMs
-        return clampInt((seconds * 1000G).intValue(), 200, 60000)
+        // Clamp in BigDecimal space before converting to Integer - BigDecimal.intValue() silently
+        // truncates/wraps on overflow instead of throwing, so an extreme input could otherwise
+        // produce an unpredictable (even negative) value before clampInt() ever got a chance to act.
+        BigDecimal ms = (seconds * 1000G).min(60000G).max(200G)
+        return clampInt(ms.intValue(), 200, 60000)
     } catch (NumberFormatException ignored) {
         return defaultMs
     }
