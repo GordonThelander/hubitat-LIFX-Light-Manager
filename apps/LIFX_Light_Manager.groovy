@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.5
+ * Version: 1.5.6
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -42,6 +42,20 @@
  * - clearLanFieldsForRow() no longer blanks lanUid/lanMac/mac/sourceMac for a row with an installed
  *   child - only reachability fields (ip, lanLastSeen) are cleared, so a later response reporting
  *   the row's original MAC flavour still matches it directly instead of depending solely on lanUidAlt.
+ *
+ * 1.5.6 - LAN-only devices are now creatable even when the rest of the fleet has cloud presence:
+ * - Previously, a device with no cloud match only got a LAN-only curated row (mergeLanOnlyIntoCurated())
+ *   when the *entire* fleet's cloud fetch had failed (discoveryMode == "lan-only"). A single device
+ *   removed from (or never added to) LIFX Cloud, while the rest of the account/token stayed healthy,
+ *   would answer LAN discovery but never enter the saved device table - visible only in the raw LAN
+ *   responses diagnostic table, with no way to select or create it. Confirmed live: deleting one
+ *   device from LIFX Cloud while 13 others remained left it undiscoverable in the app indefinitely.
+ * - findCuratedMatchForLanUid() and parseLifx()'s LAN-only fallback now key off whether this specific
+ *   response matched any cloud row, not the whole-fleet discoveryMode flag - so a genuinely cloud-less
+ *   device gets a LAN-only row (creatable, controllable) regardless of how the rest of the fleet is
+ *   discovered. The adjacent-UID match step now distinguishes "no candidates" from "multiple ambiguous
+ *   candidates" (returns matchType "ambiguous" for the latter) so a device that's still plausibly a
+ *   cloud device pending disambiguation is not mistakenly treated as cloud-less.
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -85,7 +99,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.5"
+@Field static final String APP_VERSION = "1.5.6"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -1353,7 +1367,12 @@ def parseLifx(response) {
             break
     }
 
-    if (!c && (atomicState.discoveryMode ?: "cloud-led") == "lan-only") {
+    // A LAN response that matches no cloud row at all - not just "not yet disambiguated" (see the
+    // "ambiguous" matchType above) - means this device has no cloud presence, whether because the
+    // whole fleet is in lan-only mode or, just as validly, because this one device was removed from
+    // (or never added to) LIFX Cloud while the rest of the fleet's cloud connectivity is fine. Either
+    // way it should still be trackable and creatable, not silently dropped to a diagnostics-only row.
+    if (!c && cloudMatch?.matchType != "ambiguous") {
         mergeLanOnlyIntoCurated(dev)
     }
 
@@ -1506,7 +1525,7 @@ void mergeLanOnlyIntoCurated(Map dev) {
     row.driverMode = dev.driverMode ?: driverModeForProduct(dev.product)
     row.connected = row.connected
     row.lanLastSeen = now()
-    row.status = "LAN discovered - cloud unavailable/not loaded"
+    row.status = "LAN discovered - no cloud match (cloud unavailable, or this device has no cloud presence)"
     curated[uid] = row
     atomicState.curatedRows = curated
 }
@@ -3637,8 +3656,13 @@ Map findCuratedMatchForLanUid(String lanUid, Map cloud) {
         }
     }
 
-    // Do not guess if more than one adjacent candidate exists.
-    return matches.size() == 1 ? matches[0] as Map : null
+    // Do not guess if more than one adjacent candidate exists - but tell the caller this MAC is
+    // still plausibly a cloud device (just not disambiguated yet), as distinct from genuinely
+    // matching nothing at all. Callers that fall back to LAN-only tracking on a null match need
+    // that distinction so they don't mistake residual ambiguity for a device with no cloud presence.
+    if (matches.size() == 1) return matches[0] as Map
+    if (matches.size() > 1) return [cloudId: null, curated: null, matchType: "ambiguous"]
+    return null
 }
 
 Map findLanRecordForCloudId(String cloudId, Map records) {
