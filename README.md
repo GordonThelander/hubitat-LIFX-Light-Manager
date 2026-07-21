@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.15
+**Version:** 1.5.16
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -135,12 +135,12 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.15 |
-| App | 1.5.15 |
-| White Mono driver | 1.5.4 |
-| Tunable White driver | 1.5.4 |
-| Colour driver | 1.5.5 |
-| Plus Colour driver | 1.5.5 |
+| Package | 1.5.16 |
+| App | 1.5.16 |
+| White Mono driver | 1.5.5 |
+| Tunable White driver | 1.5.5 |
+| Colour driver | 1.5.6 |
+| Plus Colour driver | 1.5.6 |
 | Master Switch driver | 1.5.4 |
 
 Tested on Hubitat Elevation platform version 2.5.0.159.
@@ -157,6 +157,8 @@ Tested on Hubitat Elevation platform version 2.5.0.159.
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.16:** Each local driver (Colour, Plus Colour, Tunable White, White Mono) now has its own configurable "Default level"/"Default colour temperature" preferences and an Apply Default command, the same pattern the Master Switch already used. More importantly, the hardcoded 75%/3000K reset sent when Off cancels an active Breathe/Pulse effect is now each bulb's own configured default instead of one fixed value shared by the whole fleet - includes the driver's own fast on/off path, not just app-triggered commands. White Mono only gets a level default, since it has no colour temperature capability at all. Requires re-uploading all four local driver files alongside the app.
 
 **1.5.15:** Fixes `colorName` being permanently stuck at its device-init default ("Soft White") forever, regardless of what colour the bulb was actually set to - no command handler ever republished it after the one-time default was set at device creation. Now derived and kept in sync (nearest match against the same 11 named colours already used for Breathe/Pulse presets) by every command that changes colour, including the response handler that reconciles state after a colour change made outside Hubitat entirely (LIFX app, physical control). App-file-only, no driver changes.
 

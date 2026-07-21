@@ -1,8 +1,11 @@
 /*
  * LIFX Local Tunable White (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.4
- * Parent app: LIFX Light Manager (Dev) 1.5.4+
+ * Version: 1.5.5
+ * Parent app: LIFX Light Manager (Dev) 1.5.16+
+ * 1.5.5 - added a configurable "Default level"/"Default colour temperature" preference, applied via
+ * a new Apply Default command (same pattern as the Master Switch's existing default) - see 1.5.16
+ * notes in the parent app for the full explanation.
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -23,8 +26,11 @@ metadata {
         attribute "lanIp", "string"
         attribute "hostFirmware", "string"
         attribute "hostFirmwareBuild", "string"
+        command "applyDefault"
     }
     preferences {
+        input "defaultColorTemperature", "number", title: "Default colour temperature (used by Apply Default)", defaultValue: 3000, range: "1500..9000", required: true
+        input "defaultLevel", "number", title: "Default level (used by Apply Default)", defaultValue: 75, range: "0..100", required: true
         input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, required: false
     }
 }
@@ -50,6 +56,10 @@ def poll() { refresh() }
 def refresh() { if (!requireParent()) return; parent.childRefresh(device) }
 def on() { fastPower("on") }
 def off() { fastPower("off") }
+def applyDefault() {
+    setLevel(defaultLevel == null ? 75 : defaultLevel, 0)
+    setColorTemperature(defaultColorTemperature ?: 3000)
+}
 
 private Boolean requireParent() {
     if (parent) return true

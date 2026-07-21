@@ -1,11 +1,15 @@
 /*
  * LIFX Local Plus Colour (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.5
- * Parent app: LIFX Light Manager (Dev) 1.5.13+
+ * Version: 1.5.6
+ * Parent app: LIFX Light Manager (Dev) 1.5.16+
  * 1.5.5 - fastPower() off now cancels an active Breathe/Pulse effect (SET_COLOR reset to
  * 75%/3000K) before the power-off packet, instead of letting the effect resume on next on -
  * see 1.5.13 notes in the parent app for the full explanation.
+ * 1.5.6 - the 75%/3000K reset is now this device's own configurable "Default level"/"Default
+ * colour temperature" preferences (same pattern as the Master Switch's existing defaults), applied
+ * via a new Apply Default command and used by fastPower()'s effect-cancelling reset - see 1.5.16
+ * notes in the parent app for the full explanation.
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -38,8 +42,11 @@ metadata {
         // Yellow, Green, Blue, Purple, Pink (case-insensitive; unrecognised falls back to White).
         command "breathe", [[name: "Base colour*", type: "STRING"], [name: "Target colour*", type: "STRING"], [name: "Speed (seconds, optional, default 3.5)", type: "STRING"], [name: "Base brightness % (optional, default 100)", type: "STRING"], [name: "Target brightness % (optional, default 100)", type: "STRING"]]
         command "pulse", [[name: "Base colour*", type: "STRING"], [name: "Target colour*", type: "STRING"], [name: "Speed (seconds, optional, default 0.8)", type: "STRING"], [name: "Base brightness % (optional, default 100)", type: "STRING"], [name: "Target brightness % (optional, default 100)", type: "STRING"]]
+        command "applyDefault"
     }
     preferences {
+        input "defaultColorTemperature", "number", title: "Default colour temperature (used by Apply Default, and when Off cancels an active Breathe/Pulse effect)", defaultValue: 3000, range: "1500..9000", required: true
+        input "defaultLevel", "number", title: "Default level (used by Apply Default, and when Off cancels an active Breathe/Pulse effect)", defaultValue: 75, range: "0..100", required: true
         input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, required: false
     }
 }
@@ -71,6 +78,10 @@ def poll() { refresh() }
 def refresh() { if (!requireParent()) return; parent.childRefresh(device) }
 def on() { fastPower("on") }
 def off() { fastPower("off") }
+def applyDefault() {
+    setLevel(defaultLevel == null ? 75 : defaultLevel, 0)
+    setColorTemperature(defaultColorTemperature ?: 3000)
+}
 
 private Boolean requireParent() {
     if (parent) return true
@@ -96,11 +107,13 @@ private void fastPower(String value) {
 
     if (value == 'off' && getDataValue('effectActive') == 'true') {
         // A running Breathe/Pulse waveform survives a plain LIFX power cycle - only a real
-        // SET_COLOR command cancels it. Reset to a sane default colour/level before the power-off
-        // packet below, so the bulb comes back to normal next time it's turned on instead of
-        // silently resuming the effect. Values match EFFECT_RESET_LEVEL/EFFECT_RESET_KELVIN in the
-        // parent app; 49151 is 75% on LIFX's 0-65535 brightness scale.
-        String colorPacket = fastSetColorPacketHex(0, 0, 49151, 3000, 0)
+        // SET_COLOR command cancels it. Reset to this device's own configured default colour/level
+        // before the power-off packet below, so the bulb comes back to that default next time it's
+        // turned on instead of silently resuming the effect.
+        Integer resetLevelPct = (defaultLevel == null ? 75 : defaultLevel) as Integer
+        Integer resetKelvin = (defaultColorTemperature ?: 3000) as Integer
+        Integer resetLevelLifx = Math.round((resetLevelPct * 65535.0d) / 100.0d) as Integer
+        String colorPacket = fastSetColorPacketHex(0, 0, resetLevelLifx, resetKelvin, 0)
         sendHubCommand(new hubitat.device.HubAction(
             colorPacket,
             hubitat.device.Protocol.LAN,
@@ -117,8 +130,8 @@ private void fastPower(String value) {
         try {
             sendEvent(name: "hue", value: 0, displayed: false)
             sendEvent(name: "saturation", value: 0, displayed: false)
-            sendEvent(name: "level", value: 75, displayed: false)
-            sendEvent(name: "colorTemperature", value: 3000, displayed: false)
+            sendEvent(name: "level", value: resetLevelPct, displayed: false)
+            sendEvent(name: "colorTemperature", value: resetKelvin, displayed: false)
             sendEvent(name: "colorMode", value: "CT", displayed: false)
         } catch (Throwable t) { log.debug "fastPower() effect-reset sendEvent failed: ${t.message}" }
         try { updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "fastPower() updateDataValue failed: ${t.message}" }
