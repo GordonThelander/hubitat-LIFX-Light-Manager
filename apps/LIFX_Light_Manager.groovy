@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.8
+ * Version: 1.5.9
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -82,6 +82,28 @@
  * - "Clear all Data" renamed to "Clear saved discovery data" with an explicit note that installed
  *   Hubitat child devices are not affected - the old name read as if it could delete real devices.
  *
+ * 1.5.9 - four correctness fixes confirmed during external re-review of 1.5.8:
+ * - Master Switch colour commands (e.g. "Red") no longer reset every Tunable White bulb's colour
+ *   temperature to a hardcoded 3500K. colorTemperature isn't part of Hubitat's standard ColorMap
+ *   contract, so an ordinary RGB colour command never actually supplied one - sendBulkSetColorOrLevel()
+ *   now preserves each non-colour-capable bulb's own current colour temperature instead.
+ * - LAN-only discovery reliability: allExpectedFound() was scoped only to cloud-known devices and
+ *   checked at every discovery phase transition, so a cloud-less device only got a chance to respond
+ *   when the fleet's cached state happened not to already satisfy it - opportunistic, not reliable.
+ *   startLanDiscovery() no longer skips broadcasting entirely just because cloud-known devices are
+ *   already cached, and the initial broadcast pass now guarantees a minimum listening window
+ *   (MIN_INITIAL_BROADCAST_PULSES) before honouring early completion, since it's the only phase that
+ *   can discover a device with no cloud presence at all. The dead forceFullLanDiscovery flag (never
+ *   set true anywhere) is removed. Rows now carry an explicit origin ("cloud" vs "lan-only") so
+ *   expectedCloudLanDiscoveryCount()/discoveredCloudLanCount() stop silently folding LAN-only rows
+ *   into cloud-completion tracking they were never meant to be part of.
+ * - mergeCloudIntoCurated() now reconciles into an existing LAN-only row (matched by exact or
+ *   adjacent UID) instead of creating a second, orphaned row when a device that was previously
+ *   tracked as cloud-less later rejoins LIFX Cloud - previously this could risk a genuine duplicate
+ *   child device if the new row got created before a LAN response reconciled the two.
+ * - durationMs() clamps in BigDecimal space before converting to Integer, same overflow fix pattern
+ *   as resolvePeriodMs() in 1.5.8, for the duration/transitionTime parameter on colour/level commands.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -124,7 +146,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.8"
+@Field static final String APP_VERSION = "1.5.9"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -200,6 +222,12 @@ preferences {
 @Field static final Integer SWEEP_PAUSE_SLOW_MS = 250
 @Field static final Integer SWEEP_BATCH_SIZE = 2
 @Field static final Long BROADCAST_DURATION_MS = 45000L
+// The initial broadcast is the only phase that can discover a device with no cloud presence at all,
+// so it must not exit the instant every cloud-known device has answered - a LAN-only device that
+// simply responds a beat slower than the rest of the fleet would otherwise never get a chance. This
+// guarantees a minimum listening window (pulses * BROADCAST_PULSE_INTERVAL_MS ~= 9s) on every run,
+// well short of the full 45s bound, so the common "nothing new" case still finishes quickly.
+@Field static final Integer MIN_INITIAL_BROADCAST_PULSES = 3
 // A legitimate full run (validation + both broadcasts + fast/retry x2/slow sweeps at current
 // pacing) can take up to ~423s worst case, so this stays comfortably above that rather than
 // risking a second Discovery click superseding a run that's still legitimately working.
@@ -614,7 +642,6 @@ Boolean allValidationIpsConfirmed(List<String> ips) {
 }
 
 void beginFullLanRediscoveryCycle() {
-    atomicState.forceFullLanDiscovery = false
     atomicState.status = "cloud"
     atomicState.phase = "Network Discovery in progress - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data, please wait for it to complete"
     atomicState.cloudStatus = "retrieving"
@@ -676,8 +703,6 @@ void startCloudDiscovery() {
 
 void startLanDiscovery() {
     cancelDiscoveryJobs()
-    Boolean forceFullScan = atomicState.forceFullLanDiscovery == true
-    atomicState.forceFullLanDiscovery = false
     atomicState.records = [:]
     atomicState.byIp = [:]
     atomicState.stats = emptyStats()
@@ -713,13 +738,10 @@ void startLanDiscovery() {
     stats.missing = Math.max(0, ((stats.expected ?: 0) as Integer) - discoveredCloudLanCount())
     atomicState.stats = stats
 
-    if (allExpectedFound() && !forceFullScan) {
-        atomicState.status = "complete"
-        atomicState.phase = "Saved device table already has IP addresses for all rows"
-        configureStatusPolling(false)
-        return
-    }
-
+    // Always run at least the initial broadcast pass, even when every cloud-known device already
+    // has a cached IP - broadcast is the only phase that can discover a device with no cloud
+    // presence at all (sweep only probes already-known/expected addresses), so skipping straight to
+    // "complete" here silently denied LAN-only devices any chance to be found on a routine re-run.
     startInitialBroadcast()
 }
 
@@ -730,9 +752,20 @@ void mergeCloudIntoCurated(Map cloud) {
         Map c = light as Map
         String uid = normaliseCloudId(id)
         if (!uid) return
-        Map row = (curated[uid] ?: [:]) as Map
+        // If this cloud device was previously tracked as a LAN-only row (no cloud presence at the
+        // time it was first seen), reconcile into that existing row instead of creating a second,
+        // orphaned one under the cloud ID key - otherwise a device that leaves and later rejoins
+        // Cloud ends up with two curatedRows entries, risking a genuine duplicate child device if
+        // the new (still-childless) entry gets created before a LAN response ever reconciles them.
+        String key = curated.containsKey(uid) ? uid : (reconcilableLanOnlyKey(uid, curated) ?: uid)
+        Map row = (curated[key] ?: [:]) as Map
         row.id = uid
         row.uid = uid
+        // Explicit provenance - cloudUidForRow() returns row.id/row.uid regardless of whether they
+        // came from a real Cloud fetch or were repurposed from a LAN MAC by mergeLanOnlyIntoCurated(),
+        // so callers that need to know "is this genuinely cloud-backed" (expectedCloudLanDiscoveryCount(),
+        // discoveredCloudLanCount()) check this field instead.
+        row.origin = "cloud"
         row.label = c.label ?: row.label
         row.groupName = c.groupName ?: row.groupName
         row.locationName = c.locationName ?: row.locationName
@@ -753,9 +786,26 @@ void mergeCloudIntoCurated(Map cloud) {
         row.driverMode = cloudDriverMode(row)
         row.cloudUpdated = now()
         row.status = row.ip ? (row.status ?: "Cloud refreshed - LAN IP retained") : "Cloud refreshed - LAN IP missing"
-        curated[uid] = row
+        curated[key] = row
     }
     atomicState.curatedRows = curated
+}
+
+// Finds a LAN-only row whose key is this cloud ID's exact or adjacent (cloud+1/cloud-1) match, so
+// mergeCloudIntoCurated() can reconcile into it instead of creating a duplicate. Same "don't guess
+// if ambiguous" principle as findCuratedMatchForLanUid()'s own adjacent-UID step - returns null
+// rather than picking arbitrarily if more than one LAN-only row could plausibly be this device.
+String reconcilableLanOnlyKey(String cloudId, Map curated) {
+    String cid = normalisedUid(cloudId)
+    if (!cid || !curated) return null
+    List<String> candidates = []
+    curated.each { k, v ->
+        Map row = v as Map
+        if ((row?.origin ?: "") != "lan-only") return
+        String type = uidMatchType(cid, k?.toString())
+        if (type) candidates << k.toString()
+    }
+    return candidates.size() == 1 ? candidates[0] : null
 }
 
 String defaultLifxCloudToken() {
@@ -883,12 +933,18 @@ void broadcastPulse() {
     if ((atomicState.status ?: "") != "broadcast") return
     Integer myRunId = (atomicState.discoveryRunId ?: 0) as Integer
 
-    if (allExpectedFound()) {
+    String stage = atomicState.broadcastStage ?: "initial"
+    Integer pulsesSoFar = ((atomicState.stats ?: emptyStats()).broadcastPulses ?: 0) as Integer
+
+    // See MIN_INITIAL_BROADCAST_PULSES: the initial stage keeps sending for a minimum window even
+    // once cloud-known devices are all satisfied, so a LAN-only device gets a real chance to answer.
+    // Later stages (chasing cloud-known stragglers only) still exit the instant they're satisfied.
+    Boolean readyToFinish = allExpectedFound() && (stage != "initial" || pulsesSoFar >= MIN_INITIAL_BROADCAST_PULSES)
+    if (readyToFinish) {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
 
-    String stage = atomicState.broadcastStage ?: "initial"
     if (now() >= ((atomicState.broadcastUntil ?: 0L) as Long)) {
         if (stage == "initial") {
             startSweepPhase("fast", 1, SWEEP_PAUSE_FAST_MS, "secondBroadcast")
@@ -1129,10 +1185,12 @@ Integer expectedCloudLanDiscoveryCount() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return 0
     // Cloud-led discovery should stop when all discoverable cloud-backed rows have LAN details.
-    // Offline cloud rows are excluded because they cannot reliably answer LAN probes.
+    // Offline cloud rows are excluded because they cannot reliably answer LAN probes. LAN-only rows
+    // are excluded too - cloudUidForRow() can't tell a real Cloud ID from a LAN MAC repurposed as one
+    // by mergeLanOnlyIntoCurated(), so row.origin is the actual signal for "genuinely cloud-backed".
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only"
     }.size() as Integer
 }
 
@@ -1141,7 +1199,7 @@ Integer discoveredCloudLanCount() {
     if (!curated) return 0
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false && ((row.ip ?: '').toString().trim())
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && ((row.ip ?: '').toString().trim())
     }.size() as Integer
 }
 
@@ -1537,6 +1595,9 @@ void mergeLanOnlyIntoCurated(Map dev) {
     Map row = (curated[uid] ?: [:]) as Map
     row.id = uid
     row.uid = uid
+    // Only mark as lan-only on first creation - never downgrade a row mergeCloudIntoCurated() has
+    // already marked "cloud" (see that function's comment on why this field exists).
+    row.origin = row.origin ?: "lan-only"
     row.label = dev.label ?: row.label ?: "LIFX ${uid}"
     row.ip = dev.ip ?: row.ip
     row.port = dev.port ?: LIFX_PORT
@@ -2957,13 +3018,19 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
-        Integer safeKelvin = clampKelvin(row, kelvin ?: 3500)
         List<Integer> payload
         if (rowIsColourCapable(row)) {
+            Integer safeKelvin = clampKelvin(row, kelvin ?: 3500)
             payload = buildHsbkPayload(scalePercentToLifx(hue100), scalePercentToLifx(sat100), brightness, safeKelvin, durationMs)
         } else {
-            // Non-colour-capable lights receive only the requested brightness level.
-            payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
+            // Non-colour-capable lights receive only the requested brightness level. colorTemperature
+            // isn't part of Hubitat's standard ColorMap contract, so an ordinary RGB colour command
+            // (e.g. "Red") never actually supplies one - using the command's kelvin (which then
+            // defaults to 3500) here would silently reset every Tunable White bulb's colour temperature
+            // on every Master Switch colour command. Preserve each bulb's own current colour
+            // temperature instead, same pattern already used by sendBulkSetLevel().
+            Integer preservedKelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: kelvin ?: 3500)
+            payload = buildHsbkPayload(0, 0, brightness, preservedKelvin, durationMs)
         }
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
         if (level > 0) {
@@ -3447,7 +3514,16 @@ Integer scaleDown100(value) {
 
 Integer durationMs(value) {
     if (value == null) return 0
-    try { return Math.max(0, Math.round((value as BigDecimal) * 1000.0d) as Integer) } catch (Throwable t) { log.debug "durationMs() failed: ${t.message}"; return 0 }
+    try {
+        // Clamp in BigDecimal space before the narrowing Integer cast - the previous Math.round()
+        // returned a long, and casting an out-of-range long to Integer silently wraps instead of
+        // throwing, same failure mode as the resolvePeriodMs() overflow fixed in 1.5.8.
+        BigDecimal ms = (value as BigDecimal) * 1000G
+        return ms.max(0G).min(new BigDecimal(Integer.MAX_VALUE)).intValue()
+    } catch (Throwable t) {
+        log.debug "durationMs() failed: ${t.message}"
+        return 0
+    }
 }
 
 Integer clampInt(Integer v, Integer lo, Integer hi) {
