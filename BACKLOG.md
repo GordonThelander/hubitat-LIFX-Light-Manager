@@ -1,13 +1,14 @@
 # Backlog
 
-Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.19 (`dev`), verified against code, not taken on any reviewer's word.
+Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.6.0 (`dev`), verified against code, not taken on any reviewer's word.
 
-## Fixed, awaiting live-hub testing (1.5.19)
+`dev`'s own version number was bumped from 1.5.19 straight to 1.6.0 on 2026-07-21 to match `main` after the backport below - no functional change on `dev` itself, purely a labelling sync so `dev`'s version number is never behind `main`'s (per Gordon: `main` must never be ahead of `dev`).
+
+## Fixed, awaiting live-hub testing (1.6.0)
+
+Both items below were already included in the 1.6.0 backport to `main` (see bottom section) before Gordon explicitly confirmed them live on `dev` - judged low-risk enough not to hold up the backport (a pure dead-code deletion, and a CSS-only wrapper), but still genuinely unconfirmed:
 
 - **Mobile: the device tables couldn't be scrolled horizontally, clipping anything wider than the screen.** Reported live 2026-07-21 with screenshots - the Device preparation table is wide enough that mobile just cut it off at the screen edge, with no way to reach the remaining columns. Not a layout change (explicitly out of scope) - `tableOpenHtml()` now wraps its own `<table>` in a `<div style="overflow-x:auto">` container, so the existing table becomes its own horizontally-scrollable/swipeable strip instead of being clipped. Applies to all three tables (Device preparation, LIFX Cloud source, LAN responses) since they all share this one helper. App-file-only.
-
-## Fixed, awaiting live-hub testing (1.5.18)
-
 - **Removed the unreachable "rename an installed child device" backend, per Gordon's decision.** Follow-up to the 1.5.17 dead-code sweep's "Open — confirmed gap" finding. On review, this feature was functionally redundant with the already-working "rename discovered lights" UI (`renameDiscoveredLightsFromSettings()`, visible on the main page): that one already updates an installed device's real Hubitat label too, whenever a Discovery row still exists for it - `childCreationRows()` (what it iterates) depends on `atomicState.curatedRows`, whereas the unreachable feature's `managedLifxLightChildren()` queries Hubitat's installed devices directly, so the only case it uniquely covered was renaming a device after its Discovery row was gone (e.g. after "Clear saved discovery data"). Not worth restoring for that narrow case, so removed instead: `childRenameActionHtml()`, `childRenameSettingNameForDni()`, `renderChildRenameInputs()`, `childRenameSettingValue()`, `curatedRowsByChildDni()`, `renameManagedChildDevicesFromSettings()`, the `renameChildDevicesBtn` button dispatch entry, the "Child device rename" result-display section, and the `atomicState.childRenameResult` init/reset lines. App-file-only.
 
 ## Open — enhancement ideas
@@ -28,9 +29,9 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 
 - **F-11 — Cloud snapshot rows accumulate without aging.** No successful-snapshot expiry/aging for Cloud-discovered rows. Scoped by the original report to 1.6.0; not started. Related but distinct from the 1.5.6 LAN-only fix - that made *new* cloud-less devices trackable, this is about *stale* cloud-linked rows never expiring.
 
-## Fixed, pending backport to main
+## Backported to main (shipped as 1.6.0, 2026-07-21)
 
-`main` is at 1.5.8 locally (committed, not yet pushed to GitHub). All items below already shipped on `dev` across 1.5.5-1.5.17, live-hub tested and confirmed (1.5.18-1.5.19 are still awaiting confirmation - see the sections above). Note that backporting 1.5.13 onward also requires the four local driver files (`LIFX_Local_Colour_Driver.groovy`/`LIFX_Local_Plus_Colour_Driver.groovy`/`LIFX_Local_Tunable_White_Driver.groovy`/`LIFX_Local_White_Mono_Driver.groovy`), not just the app - `LIFX_Master_Switch_Driver.groovy` is the only driver never modified across this whole run:
+`main` was at 1.5.8, last touched long before this whole `dev` testing run started. All items below shipped on `dev` across 1.5.5-1.5.17, live-hub tested and confirmed, plus 1.5.18/1.5.19 (see above, not yet individually confirmed) were folded in too rather than leaving `main` further behind. Naming/identity (the " (Dev)" suffixes, `lifxdev-` DNI prefix, the +5-minute background-maintenance offset that exists purely so `dev` and production never collide against the same physical fleet) was adjusted back to production form for the backport - `packageManifest.json`'s app/driver IDs and `/main/` location URLs were left completely untouched, so this was a normal upgrade for anyone with the production HPM listing already installed. Backporting 1.5.13 onward requires the four local driver files (`LIFX_Local_Colour_Driver.groovy`/`LIFX_Local_Plus_Colour_Driver.groovy`/`LIFX_Local_Tunable_White_Driver.groovy`/`LIFX_Local_White_Mono_Driver.groovy`), not just the app - `LIFX_Master_Switch_Driver.groovy` is the only driver never modified across this whole run:
 
 - Canonical identity overwrite (1.5.5) - `childDniForRow()`/`clearLanFieldsForRow()` identity preservation
 - LAN-only devices uncreatable unless entire cloud fetch failed (1.5.6) - superseded by the deeper discovery-reliability fix in 1.5.9, but the original create/track path fix still stands
@@ -53,7 +54,7 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 - Per-device configurable defaults, replacing the hardcoded 75%/3000K effect-cancel reset - each local driver now has its own "Default level"/"Default colour temperature" preferences and an Apply Default command, same pattern as the Master Switch's existing default; the reset sent when Off cancels an active Breathe/Pulse effect now reads each device's own configured default via `deviceDefaultLevel(device)`/`deviceDefaultKelvin(device)` (app side, via `device.getSetting(...)`) or the driver's own local preference values (fast on/off path) instead of one value shared by the whole fleet (1.5.16) - confirmed live DEFAULT-01 through DEFAULT-06: Apply Default works on every driver type, and the effect-cancel reset correctly uses each device's own customised default via the app path, the device's own tile/Dashboard, and the Master Switch
 - Comment/dead-code cleanup, no functional change - removed the accumulating detailed per-version changelog blocks from the app header and README (duplicated in git log/BACKLOG.md), obsolete version-tagged comments, and 11 confirmed-dead functions with zero call sites anywhere (app file 4447 → 4124 lines, README 202 → 159 lines) (1.5.17) - confirmed live: app and all four re-uploaded local drivers load and work normally, no regressions
 
-Full detail on each in `TEST_PLAN_1.5.8.md` and git log (README.md's own per-version changelog was removed in 1.5.17 as duplicated detail - see above). The current test plan is always named for the version under test - currently `TEST_PLAN_1.5.19.md`.
+Full detail on each in `TEST_PLAN_1.5.8.md` and git log (README.md's own per-version changelog was removed in 1.5.17 as duplicated detail - see above). The current test plan is always named for the version under test - currently `TEST_PLAN_1.6.0.md`.
 
 ## Explicitly not pursued
 
