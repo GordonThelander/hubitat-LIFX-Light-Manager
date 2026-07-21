@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.18
+ * Version: 1.5.19
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.18"
+@Field static final String APP_VERSION = "1.5.19"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3527,7 +3527,7 @@ String curatedTableHtml() {
         b << cell(r.status ?: (r.ip ? "LAN IP saved" : "LAN IP missing"), 9)
         b << "</tr>"
     }
-    b << "</table>"
+    b << "</table></div>"
     return b.toString()
 }
 
@@ -3565,7 +3565,7 @@ String cloudTableHtml() {
         b << cell(d.ip ? "LAN IP found" : "LAN IP missing", 9)
         b << "</tr>"
     }
-    b << "</table>"
+    b << "</table></div>"
     return b.toString()
 }
 
@@ -3593,7 +3593,7 @@ String lanTableHtml() {
         b << cell(dev.expectedFromCloud == true ? "yes - ${dev.cloudMatchType ?: 'matched'}" : "no", null, "status")
         b << "</tr>"
     }
-    b << "</table>"
+    b << "</table></div>"
     return b.toString()
 }
 
@@ -3760,8 +3760,11 @@ Boolean truthy(value) {
     return value.toString().equalsIgnoreCase("true")
 }
 
+// Wrapped in its own scrollable div, since Hubitat's page container otherwise just clips a table
+// wider than the screen on mobile with no way to reach the rest of it - this makes it swipeable
+// instead, without changing anything about the table's own columns/layout.
 String tableOpenHtml() {
-    "<table style='width:auto;border-collapse:collapse;font-size:12px;table-layout:auto;user-select:text'>"
+    "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%'><table style='width:auto;border-collapse:collapse;font-size:12px;table-layout:auto;user-select:text'>"
 }
 
 // Each <table> auto-sizes its own columns independently, so the same UID/Label/IP/Last seen

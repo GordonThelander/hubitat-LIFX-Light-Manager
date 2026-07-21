@@ -1,6 +1,10 @@
 # Backlog
 
-Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.18 (`dev`), verified against code, not taken on any reviewer's word.
+Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.19 (`dev`), verified against code, not taken on any reviewer's word.
+
+## Fixed, awaiting live-hub testing (1.5.19)
+
+- **Mobile: the device tables couldn't be scrolled horizontally, clipping anything wider than the screen.** Reported live 2026-07-21 with screenshots - the Device preparation table is wide enough that mobile just cut it off at the screen edge, with no way to reach the remaining columns. Not a layout change (explicitly out of scope) - `tableOpenHtml()` now wraps its own `<table>` in a `<div style="overflow-x:auto">` container, so the existing table becomes its own horizontally-scrollable/swipeable strip instead of being clipped. Applies to all three tables (Device preparation, LIFX Cloud source, LAN responses) since they all share this one helper. App-file-only.
 
 ## Fixed, awaiting live-hub testing (1.5.18)
 
@@ -26,7 +30,7 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 
 ## Fixed, pending backport to main
 
-`main` is at 1.5.8 locally (committed, not yet pushed to GitHub). All items below already shipped on `dev` across 1.5.5-1.5.17, live-hub tested and confirmed (1.5.18 is still awaiting confirmation - see the section above). Note that backporting 1.5.13 onward also requires the four local driver files (`LIFX_Local_Colour_Driver.groovy`/`LIFX_Local_Plus_Colour_Driver.groovy`/`LIFX_Local_Tunable_White_Driver.groovy`/`LIFX_Local_White_Mono_Driver.groovy`), not just the app - `LIFX_Master_Switch_Driver.groovy` is the only driver never modified across this whole run:
+`main` is at 1.5.8 locally (committed, not yet pushed to GitHub). All items below already shipped on `dev` across 1.5.5-1.5.17, live-hub tested and confirmed (1.5.18-1.5.19 are still awaiting confirmation - see the sections above). Note that backporting 1.5.13 onward also requires the four local driver files (`LIFX_Local_Colour_Driver.groovy`/`LIFX_Local_Plus_Colour_Driver.groovy`/`LIFX_Local_Tunable_White_Driver.groovy`/`LIFX_Local_White_Mono_Driver.groovy`), not just the app - `LIFX_Master_Switch_Driver.groovy` is the only driver never modified across this whole run:
 
 - Canonical identity overwrite (1.5.5) - `childDniForRow()`/`clearLanFieldsForRow()` identity preservation
 - LAN-only devices uncreatable unless entire cloud fetch failed (1.5.6) - superseded by the deeper discovery-reliability fix in 1.5.9, but the original create/track path fix still stands
@@ -49,7 +53,7 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 - Per-device configurable defaults, replacing the hardcoded 75%/3000K effect-cancel reset - each local driver now has its own "Default level"/"Default colour temperature" preferences and an Apply Default command, same pattern as the Master Switch's existing default; the reset sent when Off cancels an active Breathe/Pulse effect now reads each device's own configured default via `deviceDefaultLevel(device)`/`deviceDefaultKelvin(device)` (app side, via `device.getSetting(...)`) or the driver's own local preference values (fast on/off path) instead of one value shared by the whole fleet (1.5.16) - confirmed live DEFAULT-01 through DEFAULT-06: Apply Default works on every driver type, and the effect-cancel reset correctly uses each device's own customised default via the app path, the device's own tile/Dashboard, and the Master Switch
 - Comment/dead-code cleanup, no functional change - removed the accumulating detailed per-version changelog blocks from the app header and README (duplicated in git log/BACKLOG.md), obsolete version-tagged comments, and 11 confirmed-dead functions with zero call sites anywhere (app file 4447 → 4124 lines, README 202 → 159 lines) (1.5.17) - confirmed live: app and all four re-uploaded local drivers load and work normally, no regressions
 
-Full detail on each in `TEST_PLAN_1.5.8.md` and git log (README.md's own per-version changelog was removed in 1.5.17 as duplicated detail - see above). The current test plan is always named for the version under test - currently `TEST_PLAN_1.5.18.md`.
+Full detail on each in `TEST_PLAN_1.5.8.md` and git log (README.md's own per-version changelog was removed in 1.5.17 as duplicated detail - see above). The current test plan is always named for the version under test - currently `TEST_PLAN_1.5.19.md`.
 
 ## Explicitly not pursued
 
