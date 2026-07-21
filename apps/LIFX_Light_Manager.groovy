@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.13
+ * Version: 1.5.14
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -161,6 +161,26 @@
  *   declare breathe/pulse commands, so they're unaffected; LIFX Master Switch's off() already
  *   delegates to the app's own groupChildOff(), so it needed no separate change.
  *
+ * 1.5.14 - found live-hub testing 1.5.13 (BRTH-03): touching level/colour/CT while a Breathe/Pulse
+ * effect was active froze the light on a stale colour instead of the value actually requested:
+ * - Root cause: only childOff()/sendBulkSetPower() cleared the effectActive flag. Every other
+ *   command that also sends a real SET_COLOR - childSetLevel(), childSetColor(), childSetHue(),
+ *   childSetSaturation(), childSetColorTemperature(), and the Master Switch's sendBulkSetLevel()/
+ *   sendBulkSetColorOrLevel()/sendBulkSetColorTemperature() - left it set to true even though a real
+ *   SET_COLOR genuinely cancels the waveform on the bulb regardless of which handler sent it. A
+ *   later Off then wrongly believed an effect was still running and forced an unwanted colour reset
+ *   on a bulb the user had already set to something specific.
+ * - childSetLevel() specifically also replayed the device's cached hue/saturation/colorTemperature
+ *   to preserve colour through a pure brightness change - but those are frozen at the effect's base
+ *   colour from whenever it started (see runColorEffect()), not the bulb's live in-animation
+ *   position, so touching the level slider mid-effect froze the light on that stale base colour
+ *   instead of anything resembling "the requested level".
+ * - New shared effectActiveAndClear(device) helper: every command above now clears the flag when it
+ *   was set. childSetLevel() and the Master Switch's sendBulkSetLevel() additionally fall back to
+ *   the same defined default (EFFECT_RESET_LEVEL/EFFECT_RESET_KELVIN) instead of the stale cached
+ *   colour when an effect was active, matching what Off already does. The other colour/CT commands
+ *   already set an explicit new colour of their own, so only needed the flag cleared.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -203,7 +223,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.13"
+@Field static final String APP_VERSION = "1.5.14"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3034,25 +3054,46 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
+        // See childSetLevel()/EFFECT_RESET_LEVEL: a real SET_COLOR cancels a running effect, so clear
+        // the flag or a later Off would wrongly think one is still active. Also means this row's
+        // cached hue/saturation/colorTemperature (frozen at the effect's base colour) can't be
+        // trusted below - fall back to the same defined default Off already uses instead.
+        Boolean effectWasActive = effectActiveAndClear(child)
         if (level <= 0) {
             // LIFX tracks power separately from brightness, so dimming to 0 via SET_COLOR alone
             // leaves the bulb physically powered - a genuine level-0 request needs a real
             // SET_POWER off, matching what an explicit Off command sends.
+            if (effectWasActive) {
+                sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, buildHsbkPayload(0, 0, scalePercentToLifx(EFFECT_RESET_LEVEL), EFFECT_RESET_KELVIN, 0))
+            }
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
         } else {
-            Integer kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
+            Integer kelvin
             Integer hue = 0
             Integer sat = 0
-            // Only replay the cached colour if the light is actually showing it right now (colorMode
-            // RGB). If it's in CT/white mode, sending its stale leftover hue/saturation here would drag
-            // it back to that old colour as a side effect of a pure brightness change.
-            if (rowIsColourCapable(row) && (child?.currentValue('colorMode') ?: '').toString() == 'RGB') {
-                hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
-                sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
+            if (effectWasActive) {
+                kelvin = EFFECT_RESET_KELVIN
+            } else {
+                kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
+                // Only replay the cached colour if the light is actually showing it right now (colorMode
+                // RGB). If it's in CT/white mode, sending its stale leftover hue/saturation here would drag
+                // it back to that old colour as a side effect of a pure brightness change.
+                if (rowIsColourCapable(row) && (child?.currentValue('colorMode') ?: '').toString() == 'RGB') {
+                    hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
+                    sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
+                }
             }
             List<Integer> payload = buildHsbkPayload(hue, sat, brightness, kelvin, durationMs)
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
             sendPowerOnIfNeeded(row, child, durationMs)
+        }
+        if (child && effectWasActive) {
+            try {
+                child.sendEvent(name: "hue", value: 0)
+                child.sendEvent(name: "saturation", value: 0)
+                child.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
+                child.sendEvent(name: "colorMode", value: "CT")
+            } catch (Throwable t) { log.debug "sendBulkSetLevel() effect-reset sendEvent failed: ${t.message}" }
         }
     }
     rows.each { row ->
@@ -3106,6 +3147,8 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
+        // See childSetColor(): a real SET_COLOR (sent below) cancels any running effect on this row.
+        effectActiveAndClear(child)
         // Level is independent of colour and must be preserved per-bulb, not forced to a single
         // fleet-wide value - the caller's "level" here comes from the Master Switch's own
         // currentValue('level'), which can be null/stale (e.g. before it's ever been explicitly
@@ -3158,6 +3201,8 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
+        // See childSetColorTemperature(): a real SET_COLOR (sent below) cancels any running effect.
+        effectActiveAndClear(child)
         // Same principle as sendBulkSetColorOrLevel(): preserve each bulb's own current level
         // rather than forcing the whole fleet to the Master Switch's own (possibly null/stale,
         // previously hardcoded-75%-on-fallback) level as a side effect of a colour-temperature-only
@@ -3245,6 +3290,21 @@ void childOn(device) {
     requestMasterStateReconciliation()
 }
 
+// Any handler that sends a real SET_COLOR (as opposed to a plain SET_POWER) cancels a running
+// Breathe/Pulse waveform on the bulb - not just Off. Clears the effectActive flag so a later Off
+// doesn't wrongly think an effect is still running and force an unwanted colour reset. Returns
+// whether an effect was actually active, so callers that would otherwise replay stale cached
+// hue/saturation/colorTemperature (frozen at the effect's base colour since it started, not the
+// bulb's live position) know to fall back to a defined default instead.
+private Boolean effectActiveAndClear(device) {
+    if (!device) return false
+    Boolean wasActive = (device.getDataValue("effectActive") ?: "false") == "true"
+    if (wasActive) {
+        try { device.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "effectActiveAndClear() updateDataValue failed: ${t.message}" }
+    }
+    return wasActive
+}
+
 void childOff(device) {
     Map row = rowForManagedChild(device)
     if ((device?.getDataValue("effectActive") ?: "false") == "true") {
@@ -3270,25 +3330,51 @@ void childSetLevel(device, value, duration = 0) {
     Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Map row = rowForManagedChild(device)
     Integer durMs = durationMs(duration)
+    Boolean effectWasActive = effectActiveAndClear(device)
     if (level <= 0) {
         // LIFX tracks power separately from brightness, so dimming to 0 via SET_COLOR alone
         // leaves the bulb physically powered - a genuine level-0 request needs a real
         // SET_POWER off, matching what an explicit Off command sends.
+        if (effectWasActive) {
+            // See EFFECT_RESET_LEVEL: cancel the running waveform with a real SET_COLOR before the
+            // power-off packet, same as childOff() - dragging the level slider to 0 is otherwise
+            // just as capable of silently leaving an effect resumable as an explicit Off is.
+            sendSetColor(row, 0, 0, scalePercentToLifx(EFFECT_RESET_LEVEL), EFFECT_RESET_KELVIN, 0)
+        }
         sendSetPower(row, LIFX_FULL_OFF, durMs)
         try {
             device.sendEvent(name: "level", value: 0)
             device.sendEvent(name: "switch", value: "off")
+            if (effectWasActive) {
+                device.sendEvent(name: "hue", value: 0)
+                device.sendEvent(name: "saturation", value: 0)
+                device.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
+                device.sendEvent(name: "colorMode", value: "CT")
+            }
         } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
         requestMasterStateReconciliation()
         return
     }
-    Integer kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
-    // Only replay the cached colour if the light is actually showing it right now (colorMode RGB) -
-    // otherwise a stale leftover hue/saturation would drag a CT/white light back to an old colour as
-    // a side effect of a pure brightness change.
-    Boolean isRgb = (device.currentValue('colorMode') ?: '').toString() == 'RGB'
-    Integer hue = isRgb ? scalePercentToLifx(device.currentValue('hue') ?: 0) : 0
-    Integer sat = isRgb ? scalePercentToLifx(device.currentValue('saturation') ?: 0) : 0
+    Integer kelvin
+    Integer hue
+    Integer sat
+    if (effectWasActive) {
+        // Cached hue/saturation/colorTemperature are frozen at whatever the effect's base colour
+        // was when it started (see runColorEffect()), not the bulb's live in-animation position -
+        // replaying them here would freeze the light on that stale colour as a side effect of a
+        // plain brightness change. Fall back to the same defined default Off already uses instead.
+        kelvin = EFFECT_RESET_KELVIN
+        hue = 0
+        sat = 0
+    } else {
+        kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
+        // Only replay the cached colour if the light is actually showing it right now (colorMode
+        // RGB) - otherwise a stale leftover hue/saturation would drag a CT/white light back to an
+        // old colour as a side effect of a pure brightness change.
+        Boolean isRgb = (device.currentValue('colorMode') ?: '').toString() == 'RGB'
+        hue = isRgb ? scalePercentToLifx(device.currentValue('hue') ?: 0) : 0
+        sat = isRgb ? scalePercentToLifx(device.currentValue('saturation') ?: 0) : 0
+    }
     Integer bri = scalePercentToLifx(level)
     sendSetColor(row, hue, sat, bri, kelvin, durMs)
     // LIFX tracks power separately from brightness, so setLevel() alone won't wake a bulb that's
@@ -3297,6 +3383,12 @@ void childSetLevel(device, value, duration = 0) {
     try {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: "on")
+        if (effectWasActive) {
+            device.sendEvent(name: "hue", value: 0)
+            device.sendEvent(name: "saturation", value: 0)
+            device.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
+            device.sendEvent(name: "colorMode", value: "CT")
+        }
     } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
     requestMasterStateReconciliation()
     // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
@@ -3304,6 +3396,11 @@ void childSetLevel(device, value, duration = 0) {
 
 void childSetColorTemperature(device, temp, level = null, duration = 0) {
     Map row = rowForManagedChild(device)
+    // A real SET_COLOR (sent below regardless of branch) cancels any running Breathe/Pulse waveform,
+    // so clear the flag or a later Off would wrongly think an effect is still active and force an
+    // unwanted colour reset - this command already sets its own explicit kelvin/hue/saturation, so
+    // unlike childSetLevel() there's no stale-colour-replay concern to also guard against.
+    effectActiveAndClear(device)
     Integer kelvin = clampKelvin(row, safeInt(temp) ?: 3500)
     Integer lvl = clampInt(firstNonNullInt([level, device.currentValue('level')], 100), PERCENT_MIN, PERCENT_MAX)
     Integer durMs = durationMs(duration)
@@ -3330,6 +3427,9 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
 
 void childSetColor(device, Map colorMap, duration = 0) {
     Map row = rowForManagedChild(device)
+    // See childSetColorTemperature(): a real SET_COLOR (sent below) cancels any running effect, so
+    // clear the flag here too.
+    effectActiveAndClear(device)
     Integer hue100 = clampInt(safeInt(colorMap?.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Integer sat100 = clampInt(intOrDefault(colorMap?.saturation, 100), PERCENT_MIN, PERCENT_MAX)
     // Level is independent of colour and must be preserved, not accepted from the colour command -
