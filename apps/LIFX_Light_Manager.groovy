@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.17
+ * Version: 1.5.18
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.17"
+@Field static final String APP_VERSION = "1.5.18"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -194,7 +194,6 @@ def appButtonHandler(String btn) {
     if (btn == "checkFirmwareBtn") checkDeviceFirmware()
     if (btn == "checkWifiBtn") checkWifiSignal()
     if (btn == "applyBackgroundMaintenanceBtn") configureBackgroundMaintenance()
-    if (btn == "renameChildDevicesBtn") renameManagedChildDevicesFromSettings()
     if (btn == "createFastGroupBtn") createOrUpdateFastGroupChildDevice()
     if (btn == "advancedBtn") toggleAdvanced()
     if (btn == "clearAllBtn") clearAllData()
@@ -316,13 +315,6 @@ void renderMainPageContent(Boolean advanced) {
         atomicState.discoveredRenameResult = ""
     }
 
-    if (atomicState.childRenameResult) {
-        section("<b>Child device rename</b>") {
-            paragraph atomicState.childRenameResult
-        }
-        atomicState.childRenameResult = ""
-    }
-
     section("<b>Device preparation table</b>") {
         paragraph curatedTableHtml()
     }
@@ -412,7 +404,6 @@ void initialiseState() {
     if (atomicState.showAdvanced == null) atomicState.showAdvanced = false
     if (atomicState.childCreateResult == null) atomicState.childCreateResult = ""
     if (atomicState.discoveredRenameResult == null) atomicState.discoveredRenameResult = ""
-    if (atomicState.childRenameResult == null) atomicState.childRenameResult = ""
     if (atomicState.statusPollingResult == null) atomicState.statusPollingResult = ""
     if (atomicState.firmwareCheckResult == null) atomicState.firmwareCheckResult = ""
     if (atomicState.rowRemovalResult == null) atomicState.rowRemovalResult = ""
@@ -1043,7 +1034,6 @@ void clearAllData() {
     atomicState.runLanAfterCloud = false
     atomicState.childCreateResult = ""
     atomicState.discoveredRenameResult = ""
-    atomicState.childRenameResult = ""
     atomicState.statusPollingResult = ""
     atomicState.firmwareCheckResult = ""
     atomicState.rowRemovalResult = ""
@@ -1691,111 +1681,6 @@ void renameDiscoveredLightsFromSettings() {
     if (skipped) result += "<br/><b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
     if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
     atomicState.discoveredRenameResult = (renamed || skipped || failed) ? result : "No discovered-light rename fields were completed."
-}
-
-String childRenameActionHtml() {
-    List children = managedLifxLightChildren()
-    if (!children) return "No installed LIFX child devices found yet. Create child devices first, then return here to rename them."
-    return "Enter a new Hubitat child-device name beside any device you want renamed, then click Apply child device renames. Blank fields are ignored. These are local Hubitat names only; they do not rename the light in the LIFX cloud or LIFX mobile app."
-}
-
-String childRenameSettingNameForDni(String dniValue) {
-    String safe = (dniValue ?: "").toString().replaceAll("[^A-Za-z0-9_]", "_")
-    return safe ? "renameChild_${safe}".toString() : "renameChild_invalid"
-}
-
-void renderChildRenameInputs() {
-    List children = managedLifxLightChildren()
-    if (!children) return
-
-    children.each { child ->
-        String dni = ""
-        String currentName = ""
-        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
-        try { currentName = html(child.displayName?.toString() ?: child.name?.toString() ?: dni) } catch (Throwable t) { log.debug "currentName assignment failed: ${t.message}"; currentName = dni }
-        input childRenameSettingNameForDni(dni), "text",
-            title: "Rename ${currentName}",
-            description: "Leave blank to keep current name.",
-            required: false,
-            submitOnChange: false
-    }
-    input "renameChildDevicesBtn", "button", title: "Apply child device renames", submitOnChange: true
-}
-
-String childRenameSettingValue(String dniValue) {
-    String settingName = childRenameSettingNameForDni(dniValue)
-    try { return (settings[settingName] ?: "").toString().trim() } catch (Throwable t) { log.debug "childRenameSettingValue() settings lookup failed: ${t.message}" }
-    try { return (this."${settingName}" ?: "").toString().trim() } catch (Throwable t) { log.debug "childRenameSettingValue() property lookup failed: ${t.message}" }
-    return ""
-}
-
-Map curatedRowsByChildDni() {
-    Map out = [:]
-    Map curated = atomicState.curatedRows ?: [:]
-    curated.each { k, v ->
-        Map row = (v ?: [:]) as Map
-        String dni = row.childDni?.toString() ?: childDniForRow(row)
-        if (dni) out[dni] = [key: k, row: row]
-    }
-    return out
-}
-
-void renameManagedChildDevicesFromSettings() {
-    List children = managedLifxLightChildren()
-    if (!children) {
-        atomicState.childRenameResult = "No installed LIFX child devices found to rename."
-        return
-    }
-
-    Map curated = atomicState.curatedRows ?: [:]
-    Map byDni = curatedRowsByChildDni()
-    List renamed = []
-    List skipped = []
-    List failed = []
-
-    children.each { child ->
-        String dni = ""
-        String oldName = ""
-        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
-        try { oldName = child.displayName?.toString() ?: child.name?.toString() ?: dni } catch (Throwable t) { log.debug "oldName assignment failed: ${t.message}"; oldName = dni }
-
-        String newName = childRenameSettingValue(dni)
-        if (!newName) return
-
-        if (newName.size() > 80) {
-            skipped << "${html(oldName)}: name is too long; keep it under 80 characters."
-            return
-        }
-
-        try {
-            child.setLabel(newName)
-            Map match = byDni[dni] as Map
-            if (match?.row) {
-                Map row = match.row as Map
-                row.customLabel = newName
-                row.localLabel = newName
-                row.childStatus = "Renamed"
-                String key = (match.key ?: row.id ?: row.uid ?: row.lanUid)?.toString()
-                if (key) curated[key] = row
-                try { child.updateDataValue("displayLabel", newName) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
-                try { child.updateDataValue("localLabel", newName) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
-                try { child.sendEvent(name: "label", value: newName, displayed: false) } catch (Throwable t) { log.debug "sendEvent(label) failed: ${t.message}" }
-            }
-            renamed << "${html(oldName)} &rarr; ${html(newName)}"
-            try { app.updateSetting(childRenameSettingNameForDni(dni), [type: "text", value: ""]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
-        } catch (Throwable t) {
-            failed << "${html(oldName)}: ${html(safeMessage(t.message))}"
-        }
-    }
-
-    atomicState.curatedRows = curated
-    refreshMasterSwitchMembership()
-
-    String result = "<b>Child-device rename action</b><br/>"
-    if (renamed) result += "<br/><b>Renamed</b><br/>${renamed.join('<br/>')}<br/>"
-    if (skipped) result += "<br/><b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
-    if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
-    atomicState.childRenameResult = (renamed || skipped || failed) ? result : "No rename fields were completed."
 }
 
 String childLabelForRow(Map row) {
