@@ -20,13 +20,9 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 
 - **F-11 — Cloud snapshot rows accumulate without aging.** No successful-snapshot expiry/aging for Cloud-discovered rows. Scoped by the original report to 1.6.0; not started. Related but distinct from the 1.5.6 LAN-only fix - that made *new* cloud-less devices trackable, this is about *stale* cloud-linked rows never expiring.
 
-## Fixed, awaiting live-hub testing (1.5.11)
-
-- **Individual bulb colour picker silently changed brightness, same root cause as the 1.5.10 Master Switch fix.** `childSetColor()` trusted an incoming colour map's `level`/`brightness` field directly. Hubitat's own built-in "Choose a colour" picker bundles a swatch-specific level with every colour tap (red 85%, purple 41%, green 58% observed live) - simply picking a colour on an individual device silently changed its brightness. `childSetColor()` now preserves the device's own current level, matching `childSetHue()`/`childSetSaturation()`'s existing workaround and the Master Switch's 1.5.10 fix. Deliberate trade-off, confirmed with Gordon: a `setColor` call that wants to set colour and level together in one call now has its level ignored - use a separate `setLevel` call instead. Test plan: PICK-01/02/03 in `TEST_PLAN_1.5.9.md`.
-
 ## Fixed, pending backport to main
 
-`main` is at 1.5.8 locally (committed, not yet pushed to GitHub). All items below already shipped on `dev` across 1.5.5-1.5.10, live-hub tested and confirmed:
+`main` is at 1.5.8 locally (committed, not yet pushed to GitHub). All items below already shipped on `dev` across 1.5.5-1.5.11, live-hub tested and confirmed:
 
 - Canonical identity overwrite (1.5.5) - `childDniForRow()`/`clearLanFieldsForRow()` identity preservation
 - LAN-only devices uncreatable unless entire cloud fetch failed (1.5.6) - superseded by the deeper discovery-reliability fix in 1.5.9, but the original create/track path fix still stands
@@ -41,8 +37,9 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 - Duplicate row/child device risk when a LAN-only device rejoins LIFX Cloud - `mergeCloudIntoCurated()` now reconciles via `reconcilableLanOnlyKey()` (1.5.9) - confirmed LAN-03
 - `durationMs()` unbounded overflow, same pattern as `resolvePeriodMs()` (1.5.9) - confirmed DUR-01, DUR-02 not independently observable live (any sufficiently large value looks identical - see test plan note)
 - Master Switch colour/CT commands forced the whole fleet to one shared (sometimes hardcoded-75%) brightness level instead of preserving each bulb's own (1.5.10) - confirmed live with two bulbs at different levels, both kept their own level through a shared colour change
+- Individual bulb colour picker silently changed brightness, same root cause as the 1.5.10 Master Switch fix - Hubitat's own built-in "Choose a colour" picker bundles a swatch-specific level with every colour tap; `childSetColor()` now preserves the device's own current level instead (1.5.11) - confirmed live: brightness stays constant through the picker, re-confirmed Master Switch colour preservation across lights, and Breathe/Pulse unaffected (they never call `childSetColor()`)
 
-Full detail on each in `TEST_PLAN_1.5.8.md`, `TEST_PLAN_1.5.9.md` (covers 1.5.9 and 1.5.10), and the 1.5.5-1.5.10 entries in `README.md`.
+Full detail on each in `TEST_PLAN_1.5.8.md`, `TEST_PLAN_1.5.9.md` (covers 1.5.9-1.5.11), and the 1.5.5-1.5.11 entries in `README.md`.
 
 ## Explicitly not pursued
 

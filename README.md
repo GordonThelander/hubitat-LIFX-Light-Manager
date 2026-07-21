@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.10
+**Version:** 1.5.11
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -135,8 +135,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.10 |
-| App | 1.5.10 |
+| Package | 1.5.11 |
+| App | 1.5.11 |
 | White Mono driver | 1.5.4 |
 | Tunable White driver | 1.5.4 |
 | Colour driver | 1.5.4 |
@@ -157,6 +157,8 @@ Tested on Hubitat Elevation platform version 2.5.0.159.
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.11:** Fixes the same brightness-side-effect problem as 1.5.10, but for individual bulbs found live while re-testing that fix. Hubitat's own built-in "Choose a colour" picker bundles a swatch-specific brightness with every colour tap (different colours carried different levels), and picking a colour on an individual device was silently applying that bundled level instead of preserving the bulb's own brightness. Individual colour commands now preserve the device's own current brightness the same way the Master Switch already does - confirmed live, including that Breathe/Pulse effects are unaffected since they never go through this code path.
 
 **1.5.10:** Fixes a bug found live while testing 1.5.9: Master Switch colour and colour-temperature commands were forcing every bulb in the fleet to a single shared brightness level (the Master Switch's own current level, which fell back to a hardcoded 75% whenever that was null or stale), silently changing every bulb's brightness as a side effect of a pure colour or colour-temperature command. Each bulb's own current brightness is now preserved individually instead - confirmed live with two bulbs at different brightness levels, both keeping their own level through a shared colour change.
 
