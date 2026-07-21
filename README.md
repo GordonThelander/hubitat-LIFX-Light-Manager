@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.14
+**Version:** 1.5.15
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -135,8 +135,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.14 |
-| App | 1.5.14 |
+| Package | 1.5.15 |
+| App | 1.5.15 |
 | White Mono driver | 1.5.4 |
 | Tunable White driver | 1.5.4 |
 | Colour driver | 1.5.5 |
@@ -157,6 +157,8 @@ Tested on Hubitat Elevation platform version 2.5.0.159.
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.5.15:** Fixes `colorName` being permanently stuck at its device-init default ("Soft White") forever, regardless of what colour the bulb was actually set to - no command handler ever republished it after the one-time default was set at device creation. Now derived and kept in sync (nearest match against the same 11 named colours already used for Breathe/Pulse presets) by every command that changes colour, including the response handler that reconciles state after a colour change made outside Hubitat entirely (LIFX app, physical control). App-file-only, no driver changes.
 
 **1.5.14:** Fixes a follow-on bug found while testing 1.5.13: touching level, colour or colour temperature while a Breathe/Pulse effect was running froze the light on a stale colour instead of the requested change, and could also cause a later Off to force an unwanted colour reset on a bulb the user had already set deliberately. Every command that sends a real colour packet now correctly cancels the effect tracking, not just Off; a level change specifically now falls back to a plain default colour instead of replaying the effect's stale cached colour. App-file-only, no driver changes.
 

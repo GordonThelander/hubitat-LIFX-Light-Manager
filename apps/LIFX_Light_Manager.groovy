@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.14
+ * Version: 1.5.15
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -181,6 +181,29 @@
  *   colour when an effect was active, matching what Off already does. The other colour/CT commands
  *   already set an explicit new colour of their own, so only needed the flag cleared.
  *
+ * 1.5.15 - colorName attribute was permanently stale, frozen at its device-init default forever:
+ * - initialiseGoogleSafeState() (in LIFX Local Colour/Plus Colour drivers) sets colorName to "Soft
+ *   White" once, only if it was never set before, at device creation. No command handler in the app
+ *   or either driver ever published an updated colorName afterward, so a bulb set to any custom
+ *   colour still showed "Soft White" indefinitely - found live via a screenshot showing hue 67/
+ *   saturation 50 (a saturated blue-violet) still labelled "Soft White".
+ * - New deriveColorName(hue100, sat100, kelvin) helper: nearest-match lookup against the same
+ *   NAMED_COLORS palette already used for the Rule Machine breathe/pulse presets - matches by colour
+ *   temperature against the White-family entries when saturation is near zero, otherwise by nearest
+ *   hue (circular, since hue is a wraparound 0-100 scale) against the colour-family entries. Not
+ *   exact, just a best-effort label like any device's generic colour-name attribute.
+ * - Published alongside every other colour event in every handler that changes hue/saturation/
+ *   colorTemperature on a colour-capable device: childSetColor(), childSetColorTemperature(),
+ *   childSetLevel()'s effect-reset branches, childOff()'s effect-reset branch, runColorEffect(), the
+ *   Master Switch's sendBulkSetColorOrLevel()/sendBulkSetColorTemperature()/sendBulkSetLevel()'s
+ *   effect-reset branch and sendBulkSetPower()'s effect-reset branch, and parseChildLifx()'s
+ *   LIGHT_STATE handler - the last of these matters because it's the only place a colour change made
+ *   outside Hubitat (LIFX app, physical control) gets reconciled at all, so colorName would otherwise
+ *   still go stale even after every optimistic command-handler fix above. colorName is only declared
+ *   on the colour-capable drivers, not Tunable White, so every call site is gated by
+ *   rowIsColourCapable() and left untouched on the Master Switch device itself, which doesn't
+ *   declare the attribute either.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -223,7 +246,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.14"
+@Field static final String APP_VERSION = "1.5.15"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3016,6 +3039,7 @@ void sendBulkSetPower(Integer power, Integer durationMs = 0) {
                     child.sendEvent(name: "level", value: EFFECT_RESET_LEVEL)
                     child.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
                     child.sendEvent(name: "colorMode", value: "CT")
+                    if (rowIsColourCapable(row as Map)) child.sendEvent(name: "colorName", value: deriveColorName(0, 0, EFFECT_RESET_KELVIN))
                 } catch (Throwable t) { log.debug "sendBulkSetPower() effect-reset sendEvent failed: ${t.message}" }
                 try { child.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "sendBulkSetPower() updateDataValue failed: ${t.message}" }
             }
@@ -3093,6 +3117,7 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
                 child.sendEvent(name: "saturation", value: 0)
                 child.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
                 child.sendEvent(name: "colorMode", value: "CT")
+                if (rowIsColourCapable(row)) child.sendEvent(name: "colorName", value: deriveColorName(0, 0, EFFECT_RESET_KELVIN))
             } catch (Throwable t) { log.debug "sendBulkSetLevel() effect-reset sendEvent failed: ${t.message}" }
         }
     }
@@ -3159,8 +3184,9 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
         Integer rowLevel = clampInt(intOrDefault(child?.currentValue('level'), level), PERCENT_MIN, PERCENT_MAX)
         Integer brightness = scalePercentToLifx(rowLevel)
         List<Integer> payload
+        Integer safeKelvin = null
         if (rowIsColourCapable(row)) {
-            Integer safeKelvin = clampKelvin(row, kelvin ?: 3500)
+            safeKelvin = clampKelvin(row, kelvin ?: 3500)
             payload = buildHsbkPayload(scalePercentToLifx(hue100), scalePercentToLifx(sat100), brightness, safeKelvin, durationMs)
         } else {
             // Non-colour-capable lights receive only the requested brightness level. colorTemperature
@@ -3187,6 +3213,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
                     child.sendEvent(name: "hue", value: hue100)
                     child.sendEvent(name: "saturation", value: sat100)
                     child.sendEvent(name: "colorMode", value: "RGB")
+                    child.sendEvent(name: "colorName", value: deriveColorName(hue100, sat100, safeKelvin))
                 }
                 child.sendEvent(name: "level", value: rowLevel)
                 child.sendEvent(name: "switch", value: rowLevel > 0 ? "on" : "off")
@@ -3229,6 +3256,9 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
                     child.sendEvent(name: "hue", value: 0)
                     child.sendEvent(name: "saturation", value: 0)
                     child.sendEvent(name: "colorMode", value: "CT")
+                    // colorName is only declared on the colour-capable drivers, not Tunable White -
+                    // rowSupportsColorTemperature() above is intentionally broader than that.
+                    if (rowIsColourCapable(row)) child.sendEvent(name: "colorName", value: deriveColorName(0, 0, safeKelvin))
                 }
                 child.sendEvent(name: "level", value: lvl)
                 child.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
@@ -3305,6 +3335,36 @@ private Boolean effectActiveAndClear(device) {
     return wasActive
 }
 
+// Best-effort nearest-match colorName against the same NAMED_COLORS palette already used for the
+// Rule Machine breathe/pulse presets, so the label stays meaningfully in sync with the device's
+// actual hue/saturation/colorTemperature instead of frozen at whatever it was at device creation
+// (colorName is otherwise never republished by any command handler once initialiseGoogleSafeState()
+// sets its one-time default). Not exact - the colour picker offers far more colours than 11 named
+// presets - just the nearest match, same spirit as any other device's generic colour-name attribute.
+private String deriveColorName(Integer hue100, Integer sat100, Integer kelvin) {
+    Integer hue = hue100 ?: 0
+    Integer sat = sat100 ?: 0
+    Integer kel = kelvin ?: 3500
+    String bestName = null
+    Integer bestDist = null
+    // Near-zero saturation reads as white/CT regardless of hue - match by colour temperature
+    // against the palette's White-family entries (the ones with saturation 0) instead of hue.
+    Boolean matchWhite = sat <= 5
+    NAMED_COLORS.each { name, hsk ->
+        Boolean isWhiteEntry = (hsk[1] ?: 0) == 0
+        if (isWhiteEntry != matchWhite) return
+        Integer dist
+        if (matchWhite) {
+            dist = Math.abs((hsk[2] ?: 3500) - kel)
+        } else {
+            Integer diff = Math.abs((hsk[0] ?: 0) - hue)
+            dist = Math.min(diff, 100 - diff) // hue is a wraparound 0-100 scale
+        }
+        if (bestDist == null || dist < bestDist) { bestDist = dist; bestName = name }
+    }
+    return bestName ?: "Soft White"
+}
+
 void childOff(device) {
     Map row = rowForManagedChild(device)
     if ((device?.getDataValue("effectActive") ?: "false") == "true") {
@@ -3318,6 +3378,7 @@ void childOff(device) {
             device.sendEvent(name: "level", value: EFFECT_RESET_LEVEL)
             device.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
             device.sendEvent(name: "colorMode", value: "CT")
+            if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, EFFECT_RESET_KELVIN))
         } catch (Throwable t) { log.debug "childOff() effect-reset sendEvent failed: ${t.message}" }
         try { device.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "childOff() updateDataValue failed: ${t.message}" }
     }
@@ -3350,6 +3411,7 @@ void childSetLevel(device, value, duration = 0) {
                 device.sendEvent(name: "saturation", value: 0)
                 device.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
                 device.sendEvent(name: "colorMode", value: "CT")
+                if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, EFFECT_RESET_KELVIN))
             }
         } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
         requestMasterStateReconciliation()
@@ -3388,6 +3450,7 @@ void childSetLevel(device, value, duration = 0) {
             device.sendEvent(name: "saturation", value: 0)
             device.sendEvent(name: "colorTemperature", value: EFFECT_RESET_KELVIN)
             device.sendEvent(name: "colorMode", value: "CT")
+            if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, EFFECT_RESET_KELVIN))
         }
     } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
     requestMasterStateReconciliation()
@@ -3419,6 +3482,7 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
         device.sendEvent(name: "hue", value: 0)
         device.sendEvent(name: "saturation", value: 0)
         device.sendEvent(name: "colorMode", value: "CT")
+        if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, kelvin))
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "childSetColorTemperature() sendEvent failed: ${t.message}" }
     requestMasterStateReconciliation()
@@ -3458,6 +3522,7 @@ void childSetColor(device, Map colorMap, duration = 0) {
         device.sendEvent(name: "level", value: lvl)
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "colorMode", value: "RGB")
+        device.sendEvent(name: "colorName", value: deriveColorName(hue100, sat100, kelvin))
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "childSetColor() sendEvent failed: ${t.message}" }
     requestMasterStateReconciliation()
@@ -3544,6 +3609,7 @@ private void runColorEffect(Map row, device, String baseColorName, String target
         device?.sendEvent(name: "level", value: baseLevel)
         device?.sendEvent(name: "colorTemperature", value: baseKelvin)
         device?.sendEvent(name: "colorMode", value: "RGB")
+        device?.sendEvent(name: "colorName", value: deriveColorName(base[0], base[1], baseKelvin))
         device?.sendEvent(name: "switch", value: baseLevel > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "runColorEffect() sendEvent failed: ${t.message}" }
     // Marks this device so Off knows to cancel the waveform (see EFFECT_RESET_LEVEL) before
@@ -3657,7 +3723,9 @@ def parseChildLifx(response) {
             return // LIFX acknowledgement for SET workflows
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE) {
             Map light = parseLightState(parsed.payloadHex)
+            Integer hue100 = scaleDown100(light.hue ?: 0)
             Integer saturation = scaleDown100(light.saturation ?: 0)
+            Integer kelvin = (light.kelvin ?: 3500) as Integer
             // "label" reflects Hubitat's own local naming (see childLabelForRow()), set at child
             // creation/rename time - the physical bulb's raw label is intentionally not synced
             // back on refresh, since that would silently overwrite a user's local rename.
@@ -3667,18 +3735,19 @@ def parseChildLifx(response) {
             // declares ColorTemperature but not ColorControl - only emit the events a device's
             // driver actually declares a capability for.
             if (rowIsColourCapable(row)) {
-                child.sendEvent(name: "hue", value: scaleDown100(light.hue ?: 0))
+                child.sendEvent(name: "hue", value: hue100)
                 child.sendEvent(name: "saturation", value: saturation)
             }
             if (rowSupportsColorTemperature(row)) {
-                child.sendEvent(name: "colorTemperature", value: light.kelvin ?: 3500)
+                child.sendEvent(name: "colorTemperature", value: kelvin)
             }
-            // A LightState response is the only place colorMode can be reconciled with the bulb's
-            // actual reported saturation - without this, a light recoloured outside Hubitat (e.g.
-            // from the LIFX app) kept a stale colorMode, and the next brightness-only command would
-            // then desaturate it back to white.
+            // A LightState response is the only place colorMode/colorName can be reconciled with the
+            // bulb's actual reported state - without this, a light recoloured outside Hubitat (e.g.
+            // from the LIFX app or a physical control) kept a stale colorMode/colorName, and the next
+            // brightness-only command would then desaturate it back to white.
             if (rowIsColourCapable(row)) {
                 child.sendEvent(name: "colorMode", value: saturation > 0 ? "RGB" : "CT")
+                child.sendEvent(name: "colorName", value: deriveColorName(hue100, saturation, kelvin))
             }
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_POWER) {
             Integer power = leU16(parsed.payloadHex, 0)
