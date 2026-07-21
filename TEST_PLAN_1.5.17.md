@@ -6,11 +6,21 @@ backport to main" - not repeated here.
 
 ## Setup
 
-1. Confirm the app page subtitle reads `v1.5.16`.
-2. **1.5.16 requires re-uploading all four local driver files** - White Mono, Tunable White, Colour
+1. Confirm the app page subtitle reads `v1.5.17`.
+2. **1.5.17 requires re-uploading all four local driver files** - White Mono, Tunable White, Colour
    and Plus Colour all changed (Master Switch is unchanged). Not app-file-only.
 
-## colorName stays accurate instead of frozen at its device-init default (1.5.15, not yet confirmed)
+## Comment/dead-code cleanup (1.5.17, no functional change)
+
+Removed the accumulating detailed changelog blocks from the app header and README (duplicated in
+git log/BACKLOG.md), obsolete version-tagged comments, and 11 confirmed-dead functions with zero
+call sites anywhere. No behaviour was intentionally changed - verified via `groovyc` compile-check
+across the app and all five driver files together, and every removed function was individually
+confirmed to have no callers before deletion. No new test cases; a basic smoke-test after upload
+(app page loads and renders, a routine on/off/colour command still works) is enough to catch
+anything the compile-check and dead-code analysis couldn't.
+
+## colorName stays accurate instead of frozen at its device-init default (1.5.15, still not yet confirmed)
 
 `colorName` was set once to "Soft White" at device creation and never updated again by any command
 handler, regardless of what colour the bulb was actually set to. Now derived from the device's
@@ -26,7 +36,7 @@ control), not just app-triggered commands.
 | COLORNAME-03 | Starting a Breathe/Pulse effect updates colorName to the base colour | Trigger `breathe()` or `pulse()` with a specific base colour | `colorName` matches the effect's base colour, not left over from whatever the bulb showed before the effect started |
 | COLORNAME-04 | A colour change made outside the app is also reconciled | Change a bulb's colour directly from the LIFX app (or another controller), then trigger a refresh/poll in Hubitat | `colorName` updates to match the bulb's actual reported colour, not just events sent by this app's own commands |
 
-## Per-device configurable defaults (1.5.16, not yet confirmed)
+## Per-device configurable defaults (1.5.16, still not yet confirmed)
 
 Every local driver now has its own "Default level"/"Default colour temperature" preferences (White
 Mono: level only) and an Apply Default command, same pattern as the Master Switch's existing default.

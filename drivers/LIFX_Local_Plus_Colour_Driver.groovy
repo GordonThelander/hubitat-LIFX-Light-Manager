@@ -1,15 +1,9 @@
 /*
  * LIFX Local Plus Colour (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.6
- * Parent app: LIFX Light Manager (Dev) 1.5.16+
- * 1.5.5 - fastPower() off now cancels an active Breathe/Pulse effect (SET_COLOR reset to
- * 75%/3000K) before the power-off packet, instead of letting the effect resume on next on -
- * see 1.5.13 notes in the parent app for the full explanation.
- * 1.5.6 - the 75%/3000K reset is now this device's own configurable "Default level"/"Default
- * colour temperature" preferences (same pattern as the Master Switch's existing defaults), applied
- * via a new Apply Default command and used by fastPower()'s effect-cancelling reset - see 1.5.16
- * notes in the parent app for the full explanation.
+ * Version: 1.5.7
+ * Parent app: LIFX Light Manager (Dev) 1.5.17+
+ * Full version history: see git log and BACKLOG.md.
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -137,9 +131,9 @@ private void fastPower(String value) {
         try { updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "fastPower() updateDataValue failed: ${t.message}" }
     }
 
-    // v1.1.6: build the zero-target/tagged SET_POWER packet inside the child driver; sequence uses driver state, not java.lang.System.
-    // This removes one parent-app round-trip per child command when Hubitat Rule Machine
-    // invokes a group of individual child devices sequentially.
+    // Builds the zero-target/tagged SET_POWER packet inside the child driver itself, removing
+    // one parent-app round-trip per child command when Hubitat Rule Machine invokes a group of
+    // individual child devices sequentially.
     String packet = fastSetPowerPacketHex(power, 0)
 
     sendHubCommand(new hubitat.device.HubAction(

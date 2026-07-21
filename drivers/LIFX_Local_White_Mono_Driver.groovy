@@ -1,12 +1,10 @@
 /*
  * LIFX Local White Mono (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.5
- * Parent app: LIFX Light Manager (Dev) 1.5.16+
- * 1.5.5 - added a configurable "Default level" preference, applied via a new Apply Default command
- * (same pattern as the Master Switch's existing default) - see 1.5.16 notes in the parent app for
- * the full explanation. No colour temperature default here - this device has no ColorTemperature
- * capability at all.
+ * Version: 1.5.6
+ * Parent app: LIFX Light Manager (Dev) 1.5.17+
+ * Full version history: see git log and BACKLOG.md. No colour temperature default here - this
+ * device has no ColorTemperature capability at all.
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -81,9 +79,9 @@ private void fastPower(String value) {
     }
     Integer power = (value == 'on') ? 65535 : 0
 
-    // v1.1.6: build the zero-target/tagged SET_POWER packet inside the child driver; sequence uses driver state, not java.lang.System.
-    // This removes one parent-app round-trip per child command when Hubitat Rule Machine
-    // invokes a group of individual child devices sequentially.
+    // Builds the zero-target/tagged SET_POWER packet inside the child driver itself, removing
+    // one parent-app round-trip per child command when Hubitat Rule Machine invokes a group of
+    // individual child devices sequentially.
     String packet = fastSetPowerPacketHex(power, 0)
 
     sendHubCommand(new hubitat.device.HubAction(
