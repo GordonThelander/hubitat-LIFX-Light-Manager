@@ -2,6 +2,30 @@
 
 Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification. Line numbers current as of 1.5.8 (`dev`).
 
+## Open — correctness (external re-review of 1.5.8, confirmed 2026-07-21)
+
+All six confirmed directly against code (file/line citations below), not taken on the reviewer's word. Pre-existing in both `main` and `dev` - none of these functions were touched by any of the 1.5.5-1.5.8 work, so the bugs are identical on both branches.
+
+- **LAN-only discovery is unreliable - the early-exit is scoped only to cloud-known devices, not the whole fleet.**
+  `apps/LIFX_Light_Manager.groovy:1065-1070` (`allExpectedFound()`), checked at every phase transition in the discovery pipeline: `startLanDiscovery()` (`:660`, skips starting LAN discovery *at all* if cloud-known devices already have cached IPs from a previous run), and every broadcast pulse / sweep-phase transition thereafter (`:810`, `:830`, `:865`, `:873`, `:881`). Each of these aborts the *entire run* the moment cloud-known devices are satisfied, regardless of whether an unmatched (cloud-less) device has had a chance to respond yet. This is why the 1.5.6 fix (which made a cloud-less device *trackable once matched*) only worked in live testing when the fleet's cached state happened not to already satisfy `allExpectedFound()` - it is opportunistic, not deterministic. A genuinely reliable fix needs LAN-only discovery to not be short-circuited by cloud-only completion.
+
+- **`forceFullLanDiscovery` is dead code - never set `true` anywhere.**
+  `apps/LIFX_Light_Manager.groovy:561, 624`. Both existing assignments set it to `false`; nothing in the file ever sets it `true`. This is presumably meant to be the escape hatch past the early-exit above (a "force a full scan" option), but there's no UI control or code path that engages it - the flag is fully inert. Fixing the item above should either remove this dead flag or actually wire it up.
+
+- **LAN-only rows are silently counted as cloud-backed devices in discovery-completion tracking.**
+  `apps/LIFX_Light_Manager.groovy:1862-1864` (`cloudUidForRow()` returns `row.id ?: row.uid ?: row.cloudUid`) combined with `mergeLanOnlyIntoCurated()` setting `row.id`/`row.uid` to the LAN MAC for a cloud-less row - there's no field distinguishing a real cloud ID from a LAN MAC standing in for one. `expectedCloudLanDiscoveryCount()`/`discoveredCloudLanCount()` (`:1072-1090`) therefore fold LAN-only rows into the "cloud" completion count, even though their own doc comment says cloud-led discovery should stop when *cloud-backed* rows have LAN details - LAN-only rows were never meant to be part of that count at all.
+
+- **Potential duplicate row/child device if a LAN-only device is later re-added to LIFX Cloud.**
+  `apps/LIFX_Light_Manager.groovy:671-677` (`mergeCloudIntoCurated()`) looks up `curated[cloudId]` - a different dictionary key than the LAN-only row's `curated[lanMac]` entry whenever there's a cloud+1-style offset (the common case in this app). That creates a second, orphaned row for the same physical device instead of merging into the existing one. If a user creates a child from that new row before LAN discovery reconciles it, `lanUidForRow()`'s fallback chain falls through to the cloud ID and produces a different DNI - a genuine duplicate Hubitat child device, not just a cosmetic duplicate row.
+
+- **`durationMs()` has the same unbounded-overflow pattern as the `resolvePeriodMs()` bug fixed in 1.5.8, in a sibling function that wasn't touched.**
+  `apps/LIFX_Light_Manager.groovy:3387-3390`. `Math.round((value as BigDecimal) * 1000.0d) as Integer` with no pre-clamp - `Math.round()` returns a `long`, and the narrowing `as Integer` cast on an out-of-range value silently wraps instead of throwing, same failure mode as the `resolvePeriodMs()` fix. This feeds the `duration`/`transitionTime` parameter on setColor/setLevel/setColorTemperature commands.
+
+- **Master Switch colour commands reset Tunable White bulbs' colour temperature to a hardcoded 3500K, discarding their actual current value.**
+  `apps/LIFX_Light_Manager.groovy:2685` (`groupChildSetColor()`): `requestedKelvin` defaults to `3500` whenever the incoming command has no explicit colour-temperature field - true of any normal RGB colour command (e.g. "Red"). `sendBulkSetColorOrLevel()`'s non-colour branch (`:2899-2905`) then sends that hardcoded value to every non-colour-capable device in the fleet as part of the HSBK packet (saturation 0 + this kelvin = "white at 3500K"), silently overwriting whatever CT the Tunable White bulb was actually set to. Needs to use the row's own last-known colour temperature instead of the command's (usually-defaulted) kelvin value for non-colour-capable targets.
+
+Not yet verified from the same review (vaguer, no code citations checked): "metadata not consistently persisted," "some events emitted for unsupported capabilities," "edge case where Master state may not reconcile." The review's Architecture Observations (state-heavy design, no canonical identity model, discovery modes not properly separated) are design-quality opinions in the same category as the already-declined E-01-E-12 items below, not concrete bugs - noted but not queued as standalone work.
+
 ## Deferred by design (from the original report, not re-litigated)
 
 - **F-11 — Cloud snapshot rows accumulate without aging.**
