@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.0
+ * Version: 1.6.1
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.0"
+@Field static final String APP_VERSION = "1.6.1"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -1036,8 +1036,17 @@ void clearAllData() {
     atomicState.discoveredRenameResult = ""
     atomicState.statusPollingResult = ""
     atomicState.firmwareCheckResult = ""
+    atomicState.wifiCheckResult = ""
+    atomicState.backgroundMaintenanceResult = ""
     atomicState.rowRemovalResult = ""
     atomicState.recentRowRemovals = [:]
+    // A pending firmware/WiFi resend timer references curatedRows via *CheckedAt comparisons -
+    // if it fires after rows are quickly repopulated, it would apply an old check cycle's
+    // "hasn't responded yet" comparison to the new table. Cancel both and reset their timestamps.
+    try { unschedule("resendFirmwareCheck") } catch (Throwable t) { log.debug "unschedule(resendFirmwareCheck) failed: ${t.message}" }
+    try { unschedule("resendWifiCheck") } catch (Throwable t) { log.debug "unschedule(resendWifiCheck) failed: ${t.message}" }
+    atomicState.firmwareCheckStartedAt = 0L
+    atomicState.wifiCheckStartedAt = 0L
     try { app.removeSetting("selectedChildUids") } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
     state.sweepQueue = []
 }
@@ -2463,6 +2472,11 @@ void refreshMasterSwitchMembership(masterDevice = null) {
     try { dev.updateDataValue("memberCount", total.toString()) } catch (Throwable t) { log.debug "dev.updateDataValue(...) failed: ${t.message}" }
     try { dev.sendEvent(name: "memberCount", value: total) } catch (Throwable t) { log.debug "sendEvent(memberCount) failed: ${t.message}" }
     try { dev.sendEvent(name: "onMemberCount", value: onCount) } catch (Throwable t) { log.debug "sendEvent(onMemberCount) failed: ${t.message}" }
+    // Membership can change independently of any single command (a child deleted, or added after
+    // this Master Switch already existed) - recompute the aggregate switch state here too, using
+    // the same any-member-on semantics groupChildRefresh() already implements, so e.g. deleting the
+    // last active child doesn't leave the Master Switch stuck showing "on" with memberCount 0.
+    try { dev.sendEvent(name: "switch", value: onCount > 0 ? "on" : "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 // Individual child commands and parsed LAN responses update that one child's own switch state,
@@ -2949,7 +2963,7 @@ private Boolean effectActiveAndClear(device) {
 private Integer deviceDefaultLevel(device) {
     try {
         def v = device?.getSetting("defaultLevel")
-        if (v != null) return clampInt(safeInt(v) ?: EFFECT_RESET_LEVEL, PERCENT_MIN, PERCENT_MAX)
+        if (v != null) return clampInt(intOrDefault(v, EFFECT_RESET_LEVEL), PERCENT_MIN, PERCENT_MAX)
     } catch (Throwable t) { log.debug "deviceDefaultLevel() getSetting failed: ${t.message}" }
     return EFFECT_RESET_LEVEL
 }
@@ -2957,7 +2971,7 @@ private Integer deviceDefaultLevel(device) {
 private Integer deviceDefaultKelvin(device) {
     try {
         def v = device?.getSetting("defaultColorTemperature")
-        if (v != null) return safeInt(v) ?: EFFECT_RESET_KELVIN
+        if (v != null) return intOrDefault(v, EFFECT_RESET_KELVIN)
     } catch (Throwable t) { log.debug "deviceDefaultKelvin() getSetting failed: ${t.message}" }
     return EFFECT_RESET_KELVIN
 }
@@ -3378,6 +3392,10 @@ def parseChildLifx(response) {
                 child.sendEvent(name: "colorMode", value: saturation > 0 ? "RGB" : "CT")
                 child.sendEvent(name: "colorName", value: deriveColorName(hue100, saturation, kelvin))
             }
+            // A LightState response can reflect a power change made outside Hubitat too (a routine
+            // refresh/poll uses LIGHT_GET, not LIGHT_GET_POWER) - reconcile the Master Switch
+            // aggregate here as well, matching what the LIGHT_STATE_POWER branch below already does.
+            requestMasterStateReconciliation()
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_POWER) {
             Integer power = leU16(parsed.payloadHex, 0)
             child.sendEvent(name: "switch", value: power > 0 ? "on" : "off")
