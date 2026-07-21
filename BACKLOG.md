@@ -26,6 +26,18 @@ All six confirmed directly against code (file/line citations below), not taken o
 
 Not yet verified from the same review (vaguer, no code citations checked): "metadata not consistently persisted," "some events emitted for unsupported capabilities," "edge case where Master state may not reconcile." The review's Architecture Observations (state-heavy design, no canonical identity model, discovery modes not properly separated) are design-quality opinions in the same category as the already-declined E-01-E-12 items below, not concrete bugs - noted but not queued as standalone work.
 
+## Open — enhancement ideas (external architecture review, 2026-07-21)
+
+Feature/design suggestions, not bugs - not yet decided whether to pursue. Two of the four suggestions checked out as real; one is already covered by an existing declared limitation; one was factually wrong (already implemented).
+
+- **Master Switch bulk commands are genuinely sequential unicast, not broadcast - real "popcorning" risk on larger fleets.**
+  `apps/LIFX_Light_Manager.groovy:2976-2991` (`sendFastUdpToIp()`): every bulk command loop (`sendBulkSetPower`, `sendBulkSetColorOrLevel`, `sendBulkSetColorTemperature`, etc.) sends one unicast UDP packet per device via `destinationAddress: "${row.ip}:${port}"`, confirmed not a single broadcast send. Switching to LIFX's tagged broadcast packets would synchronize the whole fleet's transition instead of a visible ripple across devices. Trade-off worth weighing before pursuing: this app already caused one real hub crash from LAN traffic overload earlier in development, with substantial pacing work done since specifically to avoid a repeat - a tagged broadcast packet is processed by *every* LIFX device on the LAN (not just this app's managed ones), a different reliability/rate profile than the current tuned-against-a-real-incident unicast approach, not a risk-free swap.
+
+- **No proactive offline/health detection - a device that stops responding is never flagged.**
+  Grepped the whole app for offline/presence/unresponsive handling - none exists. `pollManagedChildSwitchStatus()` (`apps/LIFX_Light_Manager.groovy:2462-2483`) sends `GET_POWER` on a schedule and updates state only when a response arrives; there is no timeout-based negative case, so a bulb that's physically powered off at the wall keeps showing its last-known state indefinitely rather than going offline. The existing "optional lightweight LAN polling" feature sounds similar but only covers the success path.
+
+Checked and not added: "advanced capability extension" (multizone/Tile/Beam/waveforms) is already a declared limitation in `README.md`, nothing new. "Custom transition times" is factually wrong as a suggestion - already implemented end to end: `setLevel(value, duration = 0)`, `setColorTemperature(value, level = null, duration = 0)`, and `setColor(Map value)` (reading `value?.duration`) all exist on every local driver today, standard Hubitat capability signatures already wired through to `childSetLevel()`/`childSetColorTemperature()`/`childSetColor()`.
+
 ## Deferred by design (from the original report, not re-litigated)
 
 - **F-11 — Cloud snapshot rows accumulate without aging.**
