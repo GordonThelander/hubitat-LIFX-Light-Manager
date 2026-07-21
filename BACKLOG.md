@@ -1,6 +1,6 @@
 # Backlog
 
-Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.10 (`dev`), verified against code, not taken on any reviewer's word.
+Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.11 (`dev`), verified against code, not taken on any reviewer's word.
 
 ## Open — enhancement ideas (external architecture review, Gemini, 2026-07-21)
 
@@ -19,6 +19,10 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 ## Deferred by design (from the original F-01-F-12 report, not re-litigated)
 
 - **F-11 — Cloud snapshot rows accumulate without aging.** No successful-snapshot expiry/aging for Cloud-discovered rows. Scoped by the original report to 1.6.0; not started. Related but distinct from the 1.5.6 LAN-only fix - that made *new* cloud-less devices trackable, this is about *stale* cloud-linked rows never expiring.
+
+## Fixed, awaiting live-hub testing (1.5.11)
+
+- **Individual bulb colour picker silently changed brightness, same root cause as the 1.5.10 Master Switch fix.** `childSetColor()` trusted an incoming colour map's `level`/`brightness` field directly. Hubitat's own built-in "Choose a colour" picker bundles a swatch-specific level with every colour tap (red 85%, purple 41%, green 58% observed live) - simply picking a colour on an individual device silently changed its brightness. `childSetColor()` now preserves the device's own current level, matching `childSetHue()`/`childSetSaturation()`'s existing workaround and the Master Switch's 1.5.10 fix. Deliberate trade-off, confirmed with Gordon: a `setColor` call that wants to set colour and level together in one call now has its level ignored - use a separate `setLevel` call instead. Test plan: PICK-01/02/03 in `TEST_PLAN_1.5.9.md`.
 
 ## Fixed, pending backport to main
 

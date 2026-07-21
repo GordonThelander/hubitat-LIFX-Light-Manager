@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.10
+ * Version: 1.5.11
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -115,6 +115,20 @@
  * - Both functions now read each bulb's own currentValue('level') individually and preserve it,
  *   using the Master's level only as a last-resort fallback for a bulb with no level of its own yet.
  *
+ * 1.5.11 - found live-hub testing 1.5.10: the same "colour command silently changes brightness"
+ * problem also existed for individual bulbs, via Hubitat's own built-in "Choose a colour" picker:
+ * - childSetColor() trusted an incoming colorMap's level/brightness field directly. Hubitat's stock
+ *   colour-picker widget bundles a swatch-specific level with every colour tap (confirmed live:
+ *   different swatches carried different levels - red 85%, purple 41%, green 58%), so simply picking
+ *   a colour silently changed brightness as a side effect - the same problem the Master Switch had,
+ *   just via the individual-device picker rather than a bulk command. childSetHue()/childSetSaturation()
+ *   already worked around this by explicitly passing the device's own current level into the colour
+ *   map; childSetColor() itself, the entry point the picker calls directly, did not.
+ * - childSetColor() now preserves the device's own current level the same way, using the colour map's
+ *   level/brightness only as a last-resort fallback for a device with no level of its own yet. Trade-off
+ *   (deliberate, confirmed): a caller that wants to set colour and level together in one setColor call
+ *   now has its level silently ignored - use a separate setLevel call instead.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -157,7 +171,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.10"
+@Field static final String APP_VERSION = "1.5.11"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3240,7 +3254,14 @@ void childSetColor(device, Map colorMap, duration = 0) {
     Map row = rowForManagedChild(device)
     Integer hue100 = clampInt(safeInt(colorMap?.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Integer sat100 = clampInt(intOrDefault(colorMap?.saturation, 100), PERCENT_MIN, PERCENT_MAX)
-    Integer lvl = clampInt(firstNonNullInt([colorMap?.level, colorMap?.brightness], 100), PERCENT_MIN, PERCENT_MAX)
+    // Level is independent of colour and must be preserved, not accepted from the colour command -
+    // Hubitat's own built-in "Choose a colour" picker bundles a swatch-specific level with every
+    // colour tap (confirmed live: different swatches carried different levels - e.g. red 85%, purple
+    // 41%, green 58%), which silently changed brightness as a side effect of picking a colour. Same
+    // principle already applied to the Master Switch's bulk colour commands (see sendBulkSetColorOrLevel()).
+    // The colour map's level/brightness field is only a last-resort fallback for a device with no
+    // level of its own yet.
+    Integer lvl = clampInt(intOrDefault(device.currentValue('level'), firstNonNullInt([colorMap?.level, colorMap?.brightness], 100)), PERCENT_MIN, PERCENT_MAX)
     Integer kelvin = clampKelvin(row, safeInt(colorMap?.colorTemperature ?: colorMap?.kelvin) ?: safeInt(device.currentValue('colorTemperature')) ?: 3500)
     Integer durMs = durationMs(duration)
     sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durMs)

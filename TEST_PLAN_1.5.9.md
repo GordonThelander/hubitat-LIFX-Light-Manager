@@ -1,14 +1,15 @@
-# 1.5.9-1.5.10 correctness patches - live-hub test plan
+# 1.5.9-1.5.11 correctness patches - live-hub test plan
 
-Covers the four correctness fixes confirmed during external re-review of 1.5.8 (1.5.9), plus a
-per-bulb brightness fix found live while testing CT-01/CT-02 (1.5.10). Everything here runs against
-the **"(Dev)" app and drivers**, so there is no risk to the production app or its child devices.
+Covers the four correctness fixes confirmed during external re-review of 1.5.8 (1.5.9), a per-bulb
+Master Switch brightness fix found live while testing CT-01/CT-02 (1.5.10), and the same brightness
+problem fixed for individual bulbs' own colour picker (1.5.11). Everything here runs against the
+**"(Dev)" app and drivers**, so there is no risk to the production app or its child devices.
 
 ## Setup
 
 1. Upload the updated `apps/LIFX_Light_Manager.groovy` to Hubitat (no driver files changed in this
    patch).
-2. Confirm the app page subtitle reads `v1.5.10`.
+2. Confirm the app page subtitle reads `v1.5.11`.
 3. Have at least one Tunable White device installed (for CT-01/02), ideally at least two devices at
    *different* brightness levels from each other (for LVL-01/02), and ideally one device you can
    delete from/re-add to LIFX Cloud (for LAN-03) - the same kind of test used for the 1.5.6 LAN-only
@@ -51,3 +52,19 @@ regardless of what each bulb was actually set to. Fixed to preserve each bulb's 
 | LVL-01 | Master colour command preserves per-bulb brightness | Set two+ bulbs to visibly different brightness levels (e.g. 30% and 90%), then send a Master Switch colour command that includes both | Each bulb keeps its own brightness - no snapping to a shared value, and specifically no drop to 75% |
 | LVL-02 | Master colour-temperature command preserves per-bulb brightness | Same setup as LVL-01, but send a Master "Set Colour Temperature" command instead | Same result - each bulb's brightness stays at its own level, not a shared/defaulted one |
 | LVL-03 | Fresh/never-synced bulb still gets a sane brightness | If you can get a bulb into a state where it has never reported a level (e.g. right after creation, before any refresh), send it a Master colour command | Falls back sensibly (to the Master's own last-known level) rather than erroring - this is the one case where the old 75%-style fallback is still expected to apply, just per-bulb instead of fleet-wide |
+
+## Individual bulb brightness preservation via the built-in colour picker (1.5.11, found live testing LVL)
+
+`childSetColor()` trusted an incoming colour map's `level`/`brightness` field directly. Hubitat's
+own built-in "Choose a colour" picker bundles a swatch-specific level with every colour tap (red
+85%, purple 41%, green 58% observed live), so simply picking a colour on an individual device
+silently changed its brightness. Fixed to preserve the device's own current level, same principle
+as the Master Switch fix in 1.5.10. Deliberate trade-off: a `setColor` call that explicitly wants to
+set colour and level together in one call now has its level ignored - use a separate `setLevel`
+call instead.
+
+| # | Test | Steps | Expected |
+|---|------|-------|----------|
+| PICK-01 | Colour picker no longer changes brightness | Set an individual bulb to a specific brightness (e.g. 51%), then use its own "Set Color" command's built-in colour-swatch picker to choose a new colour | Brightness stays at 51% - the picker's own bundled level (e.g. 75%, 85%, whatever that swatch carries) is not applied |
+| PICK-02 | Colour still changes correctly | Same test as PICK-01 | The new hue/saturation from the picker is still applied correctly - only the level is being overridden/preserved |
+| PICK-03 | `setHue`/`setSaturation` unaffected | Use the individual hue-only or saturation-only commands | No change in behaviour - these already preserved level before this fix and still do |
