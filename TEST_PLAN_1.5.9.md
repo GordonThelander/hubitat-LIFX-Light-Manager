@@ -1,15 +1,16 @@
-# 1.5.9-1.5.11 correctness patches - live-hub test plan
+# 1.5.9-1.5.12 correctness patches - live-hub test plan
 
 Covers the four correctness fixes confirmed during external re-review of 1.5.8 (1.5.9), a per-bulb
-Master Switch brightness fix found live while testing CT-01/CT-02 (1.5.10), and the same brightness
-problem fixed for individual bulbs' own colour picker (1.5.11). Everything here runs against the
-**"(Dev)" app and drivers**, so there is no risk to the production app or its child devices.
+Master Switch brightness fix found live while testing CT-01/CT-02 (1.5.10), the same brightness
+problem fixed for individual bulbs' own colour picker (1.5.11), and a Breathe/Pulse switch-state fix
+found live testing (1.5.12). Everything here runs against the **"(Dev)" app and drivers**, so there
+is no risk to the production app or its child devices.
 
 ## Setup
 
 1. Upload the updated `apps/LIFX_Light_Manager.groovy` to Hubitat (no driver files changed in this
    patch).
-2. Confirm the app page subtitle reads `v1.5.11`.
+2. Confirm the app page subtitle reads `v1.5.12`.
 3. Have at least one Tunable White device installed (for CT-01/02), ideally at least two devices at
    *different* brightness levels from each other (for LVL-01/02), and ideally one device you can
    delete from/re-add to LIFX Cloud (for LAN-03) - the same kind of test used for the 1.5.6 LAN-only
@@ -68,3 +69,20 @@ call instead.
 | PICK-01 | Colour picker no longer changes brightness | Set an individual bulb to a specific brightness (e.g. 51%), then use its own "Set Color" command's built-in colour-swatch picker to choose a new colour | Brightness stays at 51% - the picker's own bundled level (e.g. 75%, 85%, whatever that swatch carries) is not applied |
 | PICK-02 | Colour still changes correctly | Same test as PICK-01 | The new hue/saturation from the picker is still applied correctly - only the level is being overridden/preserved |
 | PICK-03 | `setHue`/`setSaturation` unaffected | Use the individual hue-only or saturation-only commands | No change in behaviour - these already preserved level before this fix and still do |
+
+## Breathe/Pulse switch state (1.5.12, found live)
+
+`runColorEffect()` sent a real LIFX power-on packet when starting an effect but never published a
+Hubitat event for it - switch/hue/saturation/level/colorMode all stayed stale (switch showing "off")
+even though the bulb was genuinely on and breathing/pulsing. Also confirmed (not a bug, LIFX
+protocol behaviour): `SET_POWER` off does not cancel an active waveform effect on the bulb - only a
+real `SET_COLOR` does, which is why changing level/colour stops Breathe/Pulse but a plain Off then
+On does not (the effect resumes once power is restored). Not addressed in this release - see
+`BACKLOG.md` for the open question of whether Off should also explicitly cancel an active effect.
+
+| # | Test | Steps | Expected |
+|---|------|-------|----------|
+| BRTH-01 | Switch attribute updates when a Breathe/Pulse effect starts | Trigger `breathe()` or `pulse()` on a device that's currently off | Hubitat's `switch` attribute shows "on" (and hue/saturation/level/colorMode reflect the base colour), not stuck on "off" |
+| BRTH-02 | Master Switch reflects the change | Same as BRTH-01, then check the Master Switch's own aggregate state | Master Switch's switch state updates to reflect this member now being on |
+| BRTH-03 | Off then On resumes the effect (confirms understanding, not a new bug) | Start a Breathe/Pulse effect, turn the device Off, then On again | The effect resumes automatically - this is expected LIFX protocol behaviour, not something this release changes |
+| BRTH-04 | Setting level or colour still stops the effect | Start a Breathe/Pulse effect, then change level or set a plain colour | Effect stops, light shows the requested level/colour - unchanged from before |

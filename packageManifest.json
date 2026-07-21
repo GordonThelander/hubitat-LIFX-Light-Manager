@@ -1,7 +1,7 @@
 {
   "packageName": "LIFX Light Manager (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.5.11",
+  "version": "1.5.12",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-07-21",
   "releaseNotes": "Private test channel tracking the dev branch. Installs alongside the production LIFX Light Manager app under a separate namespace/DNI prefix so it can be tested against real hardware without touching production devices or automations. Not for general installation.",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.5.11"
+      "version": "1.5.12"
     }
   ],
   "drivers": [

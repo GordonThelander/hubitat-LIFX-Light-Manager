@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.11
+ * Version: 1.5.12
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -129,6 +129,22 @@
  *   (deliberate, confirmed): a caller that wants to set colour and level together in one setColor call
  *   now has its level silently ignored - use a separate setLevel call instead.
  *
+ * 1.5.12 - Breathe/Pulse never told Hubitat the bulb was on:
+ * - runColorEffect() (used by both individual childBreathe()/childPulse() and the Master Switch's
+ *   group versions) sends a real LIFX power-on packet via sendPowerOnIfNeeded() when starting an
+ *   effect, but never published any event of its own - unlike every other command handler in this
+ *   file. Hubitat's switch/hue/saturation/level/colorMode attributes stayed stale (switch showing
+ *   "off") even though the bulb was genuinely powered on and actively breathing/pulsing. Also never
+ *   called requestMasterStateReconciliation(), so the Master Switch's own aggregate state didn't
+ *   pick up the change either.
+ * - runColorEffect() now publishes the same optimistic events every other handler does, and
+ *   reconciles Master Switch state afterward.
+ * - Separately confirmed (not a bug, LIFX protocol behaviour): SET_POWER off does not cancel an
+ *   active SET_WAVEFORM effect running on the bulb - only a real SET_COLOR command does (which is
+ *   why changing level or colour stops Breathe/Pulse, but a plain Off then On does not; the effect
+ *   resumes once power is restored). Not addressed here - see BACKLOG.md for the open question of
+ *   whether Off should also explicitly cancel an active effect.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -171,7 +187,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.11"
+@Field static final String APP_VERSION = "1.5.12"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3356,6 +3372,19 @@ private void runColorEffect(Map row, device, String baseColorName, String target
         scalePercentToLifx(target[0]), scalePercentToLifx(target[1]),
         scalePercentToLifx(targetLevel), clampKelvin(row, target[2]), periodMs, waveform)
     sendLifxToRow(row, LIFX_MSG.LIGHT_SET_WAVEFORM, payload, false, false, "parseChildLifx", 1, 0)
+    // Every other command handler publishes an optimistic event after sending its packets -
+    // this one didn't, so Hubitat's own switch/colour attributes stayed stale (e.g. "off") even
+    // though the bulb was genuinely powered on and actively running the effect, since
+    // sendPowerOnIfNeeded() only sends the LIFX packet and never updates tracked state itself.
+    try {
+        device?.sendEvent(name: "hue", value: base[0])
+        device?.sendEvent(name: "saturation", value: base[1])
+        device?.sendEvent(name: "level", value: baseLevel)
+        device?.sendEvent(name: "colorTemperature", value: baseKelvin)
+        device?.sendEvent(name: "colorMode", value: "RGB")
+        device?.sendEvent(name: "switch", value: baseLevel > 0 ? "on" : "off")
+    } catch (Throwable t) { log.debug "runColorEffect() sendEvent failed: ${t.message}" }
+    requestMasterStateReconciliation()
 }
 
 void childBreathe(device, baseColorName, targetColorName, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
