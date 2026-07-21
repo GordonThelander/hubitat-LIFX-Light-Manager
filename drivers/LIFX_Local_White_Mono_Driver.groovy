@@ -1,8 +1,10 @@
 /*
  * LIFX Local White Mono
  * Namespace: Hubitat Integrations
- * Version: 1.5.4
- * Parent app: LIFX Light Manager 1.5.4+
+ * Version: 1.5.6
+ * Parent app: LIFX Light Manager 1.6.0+
+ * Full version history: see git log and the README. No colour temperature default here - this
+ * device has no ColorTemperature capability at all.
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
  * - Custom metadata is kept as attributes only and should not map to Google traits.
@@ -23,8 +25,10 @@ metadata {
         attribute "lanIp", "string"
         attribute "hostFirmware", "string"
         attribute "hostFirmwareBuild", "string"
+        command "applyDefault"
     }
     preferences {
+        input "defaultLevel", "number", title: "Default level (used by Apply Default)", defaultValue: 75, range: "0..100", required: true
         input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, required: false
     }
 }
@@ -49,6 +53,9 @@ def poll() { refresh() }
 def refresh() { if (!requireParent()) return; parent.childRefresh(device) }
 def on() { fastPower("on") }
 def off() { fastPower("off") }
+def applyDefault() {
+    setLevel(defaultLevel == null ? 75 : defaultLevel, 0)
+}
 
 private Boolean requireParent() {
     if (parent) return true
@@ -72,9 +79,9 @@ private void fastPower(String value) {
     }
     Integer power = (value == 'on') ? 65535 : 0
 
-    // v1.1.6: build the zero-target/tagged SET_POWER packet inside the child driver; sequence uses driver state, not java.lang.System.
-    // This removes one parent-app round-trip per child command when Hubitat Rule Machine
-    // invokes a group of individual child devices sequentially.
+    // Builds the zero-target/tagged SET_POWER packet inside the child driver itself, removing
+    // one parent-app round-trip per child command when Hubitat Rule Machine invokes a group of
+    // individual child devices sequentially.
     String packet = fastSetPowerPacketHex(power, 0)
 
     sendHubCommand(new hubitat.device.HubAction(

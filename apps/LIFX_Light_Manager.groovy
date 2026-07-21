@@ -1,30 +1,38 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.5.8
+ * Version: 1.6.0
  *
- * 1.5.8 - correctness and reliability maintenance release:
- * - Fixed a canonical-identity overwrite: a device that missed a routine reachability check had
- *   its LAN identity cleared for matching purposes, which could make the app wrongly conclude an
- *   already-installed device had no child at all - risking a later rediscovery overwriting its
- *   identity and creating a duplicate child device, or letting "Remove rows without an installed
- *   device" offer to delete a row whose device still exists. A reachability check now only clears
- *   reachability data (IP, last-seen), not identity, for any row with an installed child.
- * - LAN-discovered devices with no cloud presence are now trackable and creatable even when the
- *   rest of the fleet's cloud connectivity is healthy, not just during a full cloud outage - a
- *   device removed from (or never added to) LIFX Cloud, while still reachable on LAN, previously
- *   had no way to enter the saved device table unless the entire fleet lost cloud access at once.
- * - Device preparation table relabelled/restructured for clarity: UID -> Cloud ID, Label -> Cloud
- *   Name, Status -> Current Status, Cloud connected moved next to Cloud Name, Capabilities column
- *   removed (redundant with Driver mode, now labelled Driver Capabilities)
- * - Master-only create/update now reports success in the result message, not just failure
- * - A detected driver mismatch no longer overwrites the row's own record of the installed driver
- *   with the one that was expected, which could otherwise misdirect which bulk commands a device
- *   receives; driver-name lookup for mismatch detection now correctly tries all of its fallbacks
- * - Breathe/Pulse speed parsing now clamps before converting to milliseconds, avoiding a silent
- *   overflow wraparound on an extreme input value
- * - Renamed "Remove stale saved rows" to "Remove rows without an installed device", and "Clear all
- *   Data" to "Clear saved discovery data" with an explicit note that installed devices are unaffected
+ * 1.6.0 - correctness and reliability release, plus two new features:
+ * - Breathe/Pulse effects now properly integrate with Hubitat's own state: starting an effect
+ *   updates the switch/colour attributes correctly (previously stayed stale), and turning a light
+ *   off while an effect is running now cancels it instead of letting it silently resume next time
+ *   the light comes on. Touching level, colour or colour temperature while an effect is running
+ *   also now cleanly stops it and clears the leftover effect state, instead of occasionally
+ *   freezing on a stale colour or causing an unwanted reset later.
+ * - New: each local driver (Colour, Plus Colour, Tunable White, White Mono) has its own
+ *   configurable "Default level"/"Default colour temperature" preferences and an Apply Default
+ *   command - the same default is also used, per device, when Off needs to cancel a running
+ *   effect, instead of one fixed value shared by the whole fleet.
+ * - New: the colorName attribute (e.g. "Soft White", "Red") now stays accurate to the bulb's
+ *   actual colour, including colour changes made outside Hubitat (LIFX app, physical control) -
+ *   previously it was frozen at whatever it showed when the device was first created.
+ * - Master Switch colour and colour-temperature commands no longer force every bulb in the fleet
+ *   to a single shared brightness level or reset Tunable White bulbs' colour temperature - each
+ *   bulb's own level/colour temperature is preserved correctly. The same brightness-preservation
+ *   fix applies to an individual bulb's own built-in colour picker.
+ * - LAN-only discovery (a device with no LIFX Cloud presence) is now reliably found on every
+ *   Discovery run, and a device that rejoins LIFX Cloud after being LAN-only no longer risks a
+ *   duplicate device being created.
+ * - Several correctness fixes: a canonical-identity overwrite that could risk a duplicate child
+ *   device on rediscovery, a couple of numeric overflow edge cases in duration/colour-temperature
+ *   parsing, and a driver-mismatch detection bug.
+ * - Mobile: the device tables can now be scrolled horizontally instead of being clipped at the
+ *   screen edge.
+ * - Internal cleanup: removed a large amount of accumulated internal documentation and some
+ *   unused code, with no user-facing effect.
+ *
+ * Full version history: see git log and the README.
  *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
@@ -62,13 +70,10 @@ preferences {
 }
 
 // ---------------- Constants ----------------
-// Not yet referenced anywhere - added as its own isolated step so a hub-side compile
-// problem with @Field (unused elsewhere in this file until now) can be caught before
-// anything depends on it.
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.8"
+@Field static final String APP_VERSION = "1.6.0"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -98,6 +103,18 @@ preferences {
 // (confirmed live), so the speed override is typed as a plain number of seconds in a STRING field.
 @Field static final Integer BREATHE_PERIOD_MS = 3500
 @Field static final Integer PULSE_PERIOD_MS = 800
+
+// A running Breathe/Pulse waveform survives a plain LIFX power cycle - only a real SET_COLOR
+// command cancels it (confirmed live). Off checks the "effectActive" data value set by
+// runColorEffect() and, only when set, sends a sane default colour/level (cancelling the waveform)
+// before the power-off packet, so the bulb comes back to a normal state next time it's turned on
+// instead of silently resuming the effect. A plain Off on a device with no active effect is
+// completely unaffected by this - it stays exactly as before, colour/level untouched. Each colour-
+// capable device now has its own configurable "Default level"/"Default colour temperature"
+// preferences (see deviceDefaultLevel()/deviceDefaultKelvin()) - these constants are only the
+// fallback used when a device's own preference isn't available (e.g. not yet set on an older device).
+@Field static final Integer EFFECT_RESET_LEVEL = 75
+@Field static final Integer EFFECT_RESET_KELVIN = 3000
 
 // Named colour presets for Breathe/Pulse base/target colours, passed as plain ENUM command
 // parameters (each rule picks its own pair directly) rather than read from a shared device -
@@ -144,6 +161,12 @@ preferences {
 @Field static final Integer SWEEP_PAUSE_SLOW_MS = 250
 @Field static final Integer SWEEP_BATCH_SIZE = 2
 @Field static final Long BROADCAST_DURATION_MS = 45000L
+// The initial broadcast is the only phase that can discover a device with no cloud presence at all,
+// so it must not exit the instant every cloud-known device has answered - a LAN-only device that
+// simply responds a beat slower than the rest of the fleet would otherwise never get a chance. This
+// guarantees a minimum listening window (pulses * BROADCAST_PULSE_INTERVAL_MS ~= 9s) on every run,
+// well short of the full 45s bound, so the common "nothing new" case still finishes quickly.
+@Field static final Integer MIN_INITIAL_BROADCAST_PULSES = 3
 // A legitimate full run (validation + both broadcasts + fast/retry x2/slow sweeps at current
 // pacing) can take up to ~423s worst case, so this stays comfortably above that rather than
 // risking a second Discovery click superseding a run that's still legitimately working.
@@ -196,7 +219,6 @@ def appButtonHandler(String btn) {
     if (btn == "checkFirmwareBtn") checkDeviceFirmware()
     if (btn == "checkWifiBtn") checkWifiSignal()
     if (btn == "applyBackgroundMaintenanceBtn") configureBackgroundMaintenance()
-    if (btn == "renameChildDevicesBtn") renameManagedChildDevicesFromSettings()
     if (btn == "createFastGroupBtn") createOrUpdateFastGroupChildDevice()
     if (btn == "advancedBtn") toggleAdvanced()
     if (btn == "clearAllBtn") clearAllData()
@@ -318,13 +340,6 @@ void renderMainPageContent(Boolean advanced) {
         atomicState.discoveredRenameResult = ""
     }
 
-    if (atomicState.childRenameResult) {
-        section("<b>Child device rename</b>") {
-            paragraph atomicState.childRenameResult
-        }
-        atomicState.childRenameResult = ""
-    }
-
     section("<b>Device preparation table</b>") {
         paragraph curatedTableHtml()
     }
@@ -414,7 +429,6 @@ void initialiseState() {
     if (atomicState.showAdvanced == null) atomicState.showAdvanced = false
     if (atomicState.childCreateResult == null) atomicState.childCreateResult = ""
     if (atomicState.discoveredRenameResult == null) atomicState.discoveredRenameResult = ""
-    if (atomicState.childRenameResult == null) atomicState.childRenameResult = ""
     if (atomicState.statusPollingResult == null) atomicState.statusPollingResult = ""
     if (atomicState.firmwareCheckResult == null) atomicState.firmwareCheckResult = ""
     if (atomicState.rowRemovalResult == null) atomicState.rowRemovalResult = ""
@@ -558,7 +572,6 @@ Boolean allValidationIpsConfirmed(List<String> ips) {
 }
 
 void beginFullLanRediscoveryCycle() {
-    atomicState.forceFullLanDiscovery = false
     atomicState.status = "cloud"
     atomicState.phase = "Network Discovery in progress - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data, please wait for it to complete"
     atomicState.cloudStatus = "retrieving"
@@ -604,24 +617,8 @@ void clearUnconfirmedLanDiscoveryFields() {
     atomicState.curatedRows = curated
 }
 
-void startCloudDiscovery() {
-    cancelDiscoveryJobs()
-    atomicState.runLanAfterCloud = false
-    atomicState.cloudLights = [:]
-    atomicState.expectedIds = [:]
-    atomicState.stats = emptyStats()
-    atomicState.status = "cloud"
-    atomicState.discoveryMode = "cloud-led"
-    atomicState.phase = "Fetching LIFX Cloud devices and updating saved device table"
-    atomicState.cloudStatus = "retrieving"
-    atomicState.curatedReady = true
-    fetchCloudLights(true)
-}
-
 void startLanDiscovery() {
     cancelDiscoveryJobs()
-    Boolean forceFullScan = atomicState.forceFullLanDiscovery == true
-    atomicState.forceFullLanDiscovery = false
     atomicState.records = [:]
     atomicState.byIp = [:]
     atomicState.stats = emptyStats()
@@ -657,13 +654,10 @@ void startLanDiscovery() {
     stats.missing = Math.max(0, ((stats.expected ?: 0) as Integer) - discoveredCloudLanCount())
     atomicState.stats = stats
 
-    if (allExpectedFound() && !forceFullScan) {
-        atomicState.status = "complete"
-        atomicState.phase = "Saved device table already has IP addresses for all rows"
-        configureStatusPolling(false)
-        return
-    }
-
+    // Always run at least the initial broadcast pass, even when every cloud-known device already
+    // has a cached IP - broadcast is the only phase that can discover a device with no cloud
+    // presence at all (sweep only probes already-known/expected addresses), so skipping straight to
+    // "complete" here silently denied LAN-only devices any chance to be found on a routine re-run.
     startInitialBroadcast()
 }
 
@@ -674,9 +668,20 @@ void mergeCloudIntoCurated(Map cloud) {
         Map c = light as Map
         String uid = normaliseCloudId(id)
         if (!uid) return
-        Map row = (curated[uid] ?: [:]) as Map
+        // If this cloud device was previously tracked as a LAN-only row (no cloud presence at the
+        // time it was first seen), reconcile into that existing row instead of creating a second,
+        // orphaned one under the cloud ID key - otherwise a device that leaves and later rejoins
+        // Cloud ends up with two curatedRows entries, risking a genuine duplicate child device if
+        // the new (still-childless) entry gets created before a LAN response ever reconciles them.
+        String key = curated.containsKey(uid) ? uid : (reconcilableLanOnlyKey(uid, curated) ?: uid)
+        Map row = (curated[key] ?: [:]) as Map
         row.id = uid
         row.uid = uid
+        // Explicit provenance - cloudUidForRow() returns row.id/row.uid regardless of whether they
+        // came from a real Cloud fetch or were repurposed from a LAN MAC by mergeLanOnlyIntoCurated(),
+        // so callers that need to know "is this genuinely cloud-backed" (expectedCloudLanDiscoveryCount(),
+        // discoveredCloudLanCount()) check this field instead.
+        row.origin = "cloud"
         row.label = c.label ?: row.label
         row.groupName = c.groupName ?: row.groupName
         row.locationName = c.locationName ?: row.locationName
@@ -697,13 +702,26 @@ void mergeCloudIntoCurated(Map cloud) {
         row.driverMode = cloudDriverMode(row)
         row.cloudUpdated = now()
         row.status = row.ip ? (row.status ?: "Cloud refreshed - LAN IP retained") : "Cloud refreshed - LAN IP missing"
-        curated[uid] = row
+        curated[key] = row
     }
     atomicState.curatedRows = curated
 }
 
-String defaultLifxCloudToken() {
-    return ""
+// Finds a LAN-only row whose key is this cloud ID's exact or adjacent (cloud+1/cloud-1) match, so
+// mergeCloudIntoCurated() can reconcile into it instead of creating a duplicate. Same "don't guess
+// if ambiguous" principle as findCuratedMatchForLanUid()'s own adjacent-UID step - returns null
+// rather than picking arbitrarily if more than one LAN-only row could plausibly be this device.
+String reconcilableLanOnlyKey(String cloudId, Map curated) {
+    String cid = normalisedUid(cloudId)
+    if (!cid || !curated) return null
+    List<String> candidates = []
+    curated.each { k, v ->
+        Map row = v as Map
+        if ((row?.origin ?: "") != "lan-only") return
+        String type = uidMatchType(cid, k?.toString())
+        if (type) candidates << k.toString()
+    }
+    return candidates.size() == 1 ? candidates[0] : null
 }
 
 String configuredLifxCloudToken() {
@@ -827,12 +845,18 @@ void broadcastPulse() {
     if ((atomicState.status ?: "") != "broadcast") return
     Integer myRunId = (atomicState.discoveryRunId ?: 0) as Integer
 
-    if (allExpectedFound()) {
+    String stage = atomicState.broadcastStage ?: "initial"
+    Integer pulsesSoFar = ((atomicState.stats ?: emptyStats()).broadcastPulses ?: 0) as Integer
+
+    // See MIN_INITIAL_BROADCAST_PULSES: the initial stage keeps sending for a minimum window even
+    // once cloud-known devices are all satisfied, so a LAN-only device gets a real chance to answer.
+    // Later stages (chasing cloud-known stragglers only) still exit the instant they're satisfied.
+    Boolean readyToFinish = allExpectedFound() && (stage != "initial" || pulsesSoFar >= MIN_INITIAL_BROADCAST_PULSES)
+    if (readyToFinish) {
         finishLocator("Discovery completed - all expected cloud devices have LAN IPs")
         return
     }
 
-    String stage = atomicState.broadcastStage ?: "initial"
     if (now() >= ((atomicState.broadcastUntil ?: 0L) as Long)) {
         if (stage == "initial") {
             startSweepPhase("fast", 1, SWEEP_PAUSE_FAST_MS, "secondBroadcast")
@@ -1019,24 +1043,6 @@ void stopLocator() {
     configureStatusPolling(false)
 }
 
-void clearSourceTables() {
-    stopLocator()
-    atomicState.records = [:]
-    atomicState.byIp = [:]
-    atomicState.cloudLights = [:]
-    atomicState.expectedIds = [:]
-    atomicState.stats = emptyStats()
-    atomicState.status = "idle"
-    atomicState.phase = "Source tables cleared. Saved device table retained."
-    atomicState.cloudStatus = "not tested"
-    atomicState.curatedReady = true
-    state.sweepQueue = []
-}
-
-void clearSavedCuratedTable() {
-    clearAllData()
-}
-
 void clearAllData() {
     stopLocator()
     clearChildSelectionSettings()
@@ -1053,7 +1059,6 @@ void clearAllData() {
     atomicState.runLanAfterCloud = false
     atomicState.childCreateResult = ""
     atomicState.discoveredRenameResult = ""
-    atomicState.childRenameResult = ""
     atomicState.statusPollingResult = ""
     atomicState.firmwareCheckResult = ""
     atomicState.rowRemovalResult = ""
@@ -1073,10 +1078,12 @@ Integer expectedCloudLanDiscoveryCount() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return 0
     // Cloud-led discovery should stop when all discoverable cloud-backed rows have LAN details.
-    // Offline cloud rows are excluded because they cannot reliably answer LAN probes.
+    // Offline cloud rows are excluded because they cannot reliably answer LAN probes. LAN-only rows
+    // are excluded too - cloudUidForRow() can't tell a real Cloud ID from a LAN MAC repurposed as one
+    // by mergeLanOnlyIntoCurated(), so row.origin is the actual signal for "genuinely cloud-backed".
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only"
     }.size() as Integer
 }
 
@@ -1085,12 +1092,8 @@ Integer discoveredCloudLanCount() {
     if (!curated) return 0
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false && ((row.ip ?: '').toString().trim())
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && ((row.ip ?: '').toString().trim())
     }.size() as Integer
-}
-
-Integer cloudRowCount() {
-    return (atomicState.cloudLights ?: [:]).size() as Integer
 }
 
 Integer curatedRowCount() {
@@ -1101,10 +1104,6 @@ Integer curatedWithIpCount() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return 0
     return curated.values().findAll { row -> ((row as Map).ip ?: '').toString().trim() }.size() as Integer
-}
-
-Integer curatedMatchedCount() {
-    return curatedWithIpCount()
 }
 
 void updateMatchStats() {
@@ -1127,7 +1126,6 @@ void updateMatchStats() {
     atomicState.stats = stats
 }
 
-// ---------------- Cloud model ----------------
 // ---------------- Cloud model ----------------
 
 Map flattenCloudLight(Map item) {
@@ -1481,6 +1479,9 @@ void mergeLanOnlyIntoCurated(Map dev) {
     Map row = (curated[uid] ?: [:]) as Map
     row.id = uid
     row.uid = uid
+    // Only mark as lan-only on first creation - never downgrade a row mergeCloudIntoCurated() has
+    // already marked "cloud" (see that function's comment on why this field exists).
+    row.origin = row.origin ?: "lan-only"
     row.label = dev.label ?: row.label ?: "LIFX ${uid}"
     row.ip = dev.ip ?: row.ip
     row.port = dev.port ?: LIFX_PORT
@@ -1626,37 +1627,10 @@ void clearChildSelectionSettings() {
 }
 
 
-String discoveredLightRenameActionHtml() {
-    List rows = childCreationRows()
-    if (!rows) return "No discovered lights are ready to rename yet. Run Discovery first."
-    return "Enter a local Hubitat name beside any discovered light you want renamed before child-device creation, then click Apply discovered light names. Blank fields are ignored. This does not rename the light in LIFX Cloud."
-}
-
 String discoveredLightRenameSettingName(String uidValue) {
     String uid = normalisedUid(uidValue)
     String safe = (uid ?: "").replaceAll("[^A-Za-z0-9_]", "_")
     return safe ? "renameDiscovered_${safe}".toString() : "renameDiscovered_invalid"
-}
-
-void renderDiscoveredLightRenameInputs() {
-    List rows = childCreationRows()
-    if (!rows) return
-
-    rows.each { item ->
-        Map row = item as Map
-        String uid = normalisedUid(row.id ?: row.uid ?: row.lanUid)
-        if (!uid) return
-        String cloudName = html((row.label ?: uid).toString())
-        String localName = html((row.customLabel ?: row.localLabel ?: "").toString().trim())
-        String current = localName ?: cloudName
-        String ip = (row.ip ?: "no IP").toString()
-        input discoveredLightRenameSettingName(uid), "text",
-            title: "${current} - ${ip}",
-            description: localName ? "Current local name override. Leave blank to keep it." : "Detected name: ${cloudName}. Leave blank to keep it.",
-            required: false,
-            submitOnChange: false
-    }
-    input "renameDiscoveredLightsBtn", "button", title: "Apply discovered light names", submitOnChange: true
 }
 
 String discoveredLightRenameSettingValue(String uidValue) {
@@ -1732,111 +1706,6 @@ void renameDiscoveredLightsFromSettings() {
     if (skipped) result += "<br/><b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
     if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
     atomicState.discoveredRenameResult = (renamed || skipped || failed) ? result : "No discovered-light rename fields were completed."
-}
-
-String childRenameActionHtml() {
-    List children = managedLifxLightChildren()
-    if (!children) return "No installed LIFX child devices found yet. Create child devices first, then return here to rename them."
-    return "Enter a new Hubitat child-device name beside any device you want renamed, then click Apply child device renames. Blank fields are ignored. These are local Hubitat names only; they do not rename the light in the LIFX cloud or LIFX mobile app."
-}
-
-String childRenameSettingNameForDni(String dniValue) {
-    String safe = (dniValue ?: "").toString().replaceAll("[^A-Za-z0-9_]", "_")
-    return safe ? "renameChild_${safe}".toString() : "renameChild_invalid"
-}
-
-void renderChildRenameInputs() {
-    List children = managedLifxLightChildren()
-    if (!children) return
-
-    children.each { child ->
-        String dni = ""
-        String currentName = ""
-        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
-        try { currentName = html(child.displayName?.toString() ?: child.name?.toString() ?: dni) } catch (Throwable t) { log.debug "currentName assignment failed: ${t.message}"; currentName = dni }
-        input childRenameSettingNameForDni(dni), "text",
-            title: "Rename ${currentName}",
-            description: "Leave blank to keep current name.",
-            required: false,
-            submitOnChange: false
-    }
-    input "renameChildDevicesBtn", "button", title: "Apply child device renames", submitOnChange: true
-}
-
-String childRenameSettingValue(String dniValue) {
-    String settingName = childRenameSettingNameForDni(dniValue)
-    try { return (settings[settingName] ?: "").toString().trim() } catch (Throwable t) { log.debug "childRenameSettingValue() settings lookup failed: ${t.message}" }
-    try { return (this."${settingName}" ?: "").toString().trim() } catch (Throwable t) { log.debug "childRenameSettingValue() property lookup failed: ${t.message}" }
-    return ""
-}
-
-Map curatedRowsByChildDni() {
-    Map out = [:]
-    Map curated = atomicState.curatedRows ?: [:]
-    curated.each { k, v ->
-        Map row = (v ?: [:]) as Map
-        String dni = row.childDni?.toString() ?: childDniForRow(row)
-        if (dni) out[dni] = [key: k, row: row]
-    }
-    return out
-}
-
-void renameManagedChildDevicesFromSettings() {
-    List children = managedLifxLightChildren()
-    if (!children) {
-        atomicState.childRenameResult = "No installed LIFX child devices found to rename."
-        return
-    }
-
-    Map curated = atomicState.curatedRows ?: [:]
-    Map byDni = curatedRowsByChildDni()
-    List renamed = []
-    List skipped = []
-    List failed = []
-
-    children.each { child ->
-        String dni = ""
-        String oldName = ""
-        try { dni = child.deviceNetworkId?.toString() ?: "" } catch (Throwable t) { log.debug "dni assignment failed: ${t.message}" }
-        try { oldName = child.displayName?.toString() ?: child.name?.toString() ?: dni } catch (Throwable t) { log.debug "oldName assignment failed: ${t.message}"; oldName = dni }
-
-        String newName = childRenameSettingValue(dni)
-        if (!newName) return
-
-        if (newName.size() > 80) {
-            skipped << "${html(oldName)}: name is too long; keep it under 80 characters."
-            return
-        }
-
-        try {
-            child.setLabel(newName)
-            Map match = byDni[dni] as Map
-            if (match?.row) {
-                Map row = match.row as Map
-                row.customLabel = newName
-                row.localLabel = newName
-                row.childStatus = "Renamed"
-                String key = (match.key ?: row.id ?: row.uid ?: row.lanUid)?.toString()
-                if (key) curated[key] = row
-                try { child.updateDataValue("displayLabel", newName) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
-                try { child.updateDataValue("localLabel", newName) } catch (Throwable t) { log.debug "child.updateDataValue(...) failed: ${t.message}" }
-                try { child.sendEvent(name: "label", value: newName, displayed: false) } catch (Throwable t) { log.debug "sendEvent(label) failed: ${t.message}" }
-            }
-            renamed << "${html(oldName)} &rarr; ${html(newName)}"
-            try { app.updateSetting(childRenameSettingNameForDni(dni), [type: "text", value: ""]) } catch (Throwable t) { log.debug "app.updateSetting(...) failed: ${t.message}" }
-        } catch (Throwable t) {
-            failed << "${html(oldName)}: ${html(safeMessage(t.message))}"
-        }
-    }
-
-    atomicState.curatedRows = curated
-    refreshMasterSwitchMembership()
-
-    String result = "<b>Child-device rename action</b><br/>"
-    if (renamed) result += "<br/><b>Renamed</b><br/>${renamed.join('<br/>')}<br/>"
-    if (skipped) result += "<br/><b>Skipped</b><br/>${skipped.join('<br/>')}<br/>"
-    if (failed) result += "<br/><b>Failed</b><br/>${failed.join('<br/>')}<br/>"
-    atomicState.childRenameResult = (renamed || skipped || failed) ? result : "No rename fields were completed."
 }
 
 String childLabelForRow(Map row) {
@@ -1978,7 +1847,7 @@ String driverTypeForRow(Map row) {
     String product = (row.productName ?: row.productIdentifier ?: "").toString().toLowerCase()
     Integer lanProduct = safeInt(row.lanProduct ?: row.productId ?: row.product)
 
-    // v4.7.7: IR capability is authoritative. Any IR-capable light must use the
+    // IR capability is authoritative. Any IR-capable light must use the
     // Plus driver so the infrared management command/attributes are available.
     Boolean ir = truthy(row.hasIr) || cap.contains("infrared") || cap.contains(" ir") || cap.endsWith("ir") || mode.endsWith("ir") || mode.contains("+ ir") || mode.contains("infrared")
     if (ir) return "LIFX Local Plus Colour"
@@ -2053,15 +1922,6 @@ void createOrUpdateSelectedChildDevicesFromCurated() {
 void createOrUpdateAllChildDevicesFromCurated() {
     List uids = childCreationOptions().keySet().collect { it.toString() }
     createOrUpdateChildDevicesForUids(uids, "all listed child devices", true)
-}
-
-void createOrUpdateChildDeviceForUid(String uidValue) {
-    String uid = normalisedUid(uidValue)
-    if (!uid) {
-        atomicState.childCreateResult = "No child UID supplied."
-        return
-    }
-    createOrUpdateChildDevicesForUids([uid], uid, true)
 }
 
 void createOrUpdateChildDevicesForUids(List selectedUids, String actionLabel = "selected child devices", Boolean ensureMasterSwitch = false) {
@@ -2781,21 +2641,39 @@ List<Integer> buildSetPowerPayload(Integer power, Integer durationMs = 0) {
     return u16le(power ?: 0) + u32le(durationMs ?: 0)
 }
 
-String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
-    // Exposed for child drivers so individual child on/off can mirror the original Rob Heyes dispatch pattern:
-    // driver calls parent to build the lightweight zero-target packet, then the driver sends one UDP packet
-    // directly to its stored IP with ignoreResponse=true.
-    return buildLifxPacketForTarget(LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(power, durationMs), "", true, false, false)
-}
-
 void sendBulkSetPower(Integer power, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
+
+    if ((power ?: 0) <= 0) {
+        // See childOff()/deviceDefaultLevel(): any fleet member currently running a Breathe/Pulse
+        // waveform needs it cancelled with a real SET_COLOR first, or it'll silently resume next
+        // time it's powered back on. Only touches rows actually mid-effect - everything else in
+        // this bulk-off pass is completely unaffected.
+        rows.each { row ->
+            def child = getChildDevice(childDniForBulkRow(row as Map))
+            if (child && (child.getDataValue("effectActive") ?: "false") == "true") {
+                Integer resetLevel = deviceDefaultLevel(child)
+                Integer resetKelvin = deviceDefaultKelvin(child)
+                sendFastSetToRow(row as Map, LIFX_MSG.LIGHT_SET_COLOR, buildHsbkPayload(0, 0, scalePercentToLifx(resetLevel), resetKelvin, 0))
+                try {
+                    child.sendEvent(name: "hue", value: 0)
+                    child.sendEvent(name: "saturation", value: 0)
+                    child.sendEvent(name: "level", value: resetLevel)
+                    child.sendEvent(name: "colorTemperature", value: resetKelvin)
+                    child.sendEvent(name: "colorMode", value: "CT")
+                    if (rowIsColourCapable(row as Map)) child.sendEvent(name: "colorName", value: deriveColorName(0, 0, resetKelvin))
+                } catch (Throwable t) { log.debug "sendBulkSetPower() effect-reset sendEvent failed: ${t.message}" }
+                try { child.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "sendBulkSetPower() updateDataValue failed: ${t.message}" }
+            }
+        }
+    }
+
     List<Integer> payload = buildSetPowerPayload(power, durationMs)
 
-    // v4.7.3: app/fast-group power switching uses the original Rob Heyes style fast path:
-    // one IP-directed, zero-target/tagged SET_POWER packet per light, no ACK,
-    // no response, no callback, no UID-candidate fan-out.
+    // Fast group power switching uses the original Rob Heyes style fast path: one
+    // IP-directed, zero-target/tagged SET_POWER packet per light, no ACK, no response,
+    // no callback, no UID-candidate fan-out.
     rows.each { row -> sendFastSetToRow(row as Map, LIFX_MSG.LIGHT_SET_POWER, payload) }
 
     // A pure power command never invents level state - it only reflects the actual power sent,
@@ -2823,25 +2701,49 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
+        // See childSetLevel()/deviceDefaultLevel(): a real SET_COLOR cancels a running effect, so
+        // clear the flag or a later Off would wrongly think one is still active. Also means this
+        // row's cached hue/saturation/colorTemperature (frozen at the effect's base colour) can't be
+        // trusted below - fall back to the device's own default (same as Off) instead.
+        Boolean effectWasActive = effectActiveAndClear(child)
+        Integer resetLevel = effectWasActive ? deviceDefaultLevel(child) : null
+        Integer resetKelvin = effectWasActive ? deviceDefaultKelvin(child) : null
         if (level <= 0) {
             // LIFX tracks power separately from brightness, so dimming to 0 via SET_COLOR alone
             // leaves the bulb physically powered - a genuine level-0 request needs a real
             // SET_POWER off, matching what an explicit Off command sends.
+            if (effectWasActive) {
+                sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, buildHsbkPayload(0, 0, scalePercentToLifx(resetLevel), resetKelvin, 0))
+            }
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
         } else {
-            Integer kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
+            Integer kelvin
             Integer hue = 0
             Integer sat = 0
-            // Only replay the cached colour if the light is actually showing it right now (colorMode
-            // RGB). If it's in CT/white mode, sending its stale leftover hue/saturation here would drag
-            // it back to that old colour as a side effect of a pure brightness change.
-            if (rowIsColourCapable(row) && (child?.currentValue('colorMode') ?: '').toString() == 'RGB') {
-                hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
-                sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
+            if (effectWasActive) {
+                kelvin = resetKelvin
+            } else {
+                kelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: 3500)
+                // Only replay the cached colour if the light is actually showing it right now (colorMode
+                // RGB). If it's in CT/white mode, sending its stale leftover hue/saturation here would drag
+                // it back to that old colour as a side effect of a pure brightness change.
+                if (rowIsColourCapable(row) && (child?.currentValue('colorMode') ?: '').toString() == 'RGB') {
+                    hue = scalePercentToLifx(safeInt(child?.currentValue('hue')) ?: 0)
+                    sat = scalePercentToLifx(safeInt(child?.currentValue('saturation')) ?: 0)
+                }
             }
             List<Integer> payload = buildHsbkPayload(hue, sat, brightness, kelvin, durationMs)
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
             sendPowerOnIfNeeded(row, child, durationMs)
+        }
+        if (child && effectWasActive) {
+            try {
+                child.sendEvent(name: "hue", value: 0)
+                child.sendEvent(name: "saturation", value: 0)
+                child.sendEvent(name: "colorTemperature", value: resetKelvin)
+                child.sendEvent(name: "colorMode", value: "CT")
+                if (rowIsColourCapable(row)) child.sendEvent(name: "colorName", value: deriveColorName(0, 0, resetKelvin))
+            } catch (Throwable t) { log.debug "sendBulkSetLevel() effect-reset sendEvent failed: ${t.message}" }
         }
     }
     rows.each { row ->
@@ -2892,20 +2794,37 @@ Boolean rowSupportsColorTemperature(Map row) {
 void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Integer kelvin, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
-    Integer brightness = scalePercentToLifx(level)
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
-        Integer safeKelvin = clampKelvin(row, kelvin ?: 3500)
+        // See childSetColor(): a real SET_COLOR (sent below) cancels any running effect on this row.
+        effectActiveAndClear(child)
+        // Level is independent of colour and must be preserved per-bulb, not forced to a single
+        // fleet-wide value - the caller's "level" here comes from the Master Switch's own
+        // currentValue('level'), which can be null/stale (e.g. before it's ever been explicitly
+        // synced) and previously fell back to a hardcoded 75%, silently changing every bulb's
+        // brightness - including ones already at a different level - as a side effect of a pure
+        // colour command. Each bulb's own current level is the correct "unchanged" value; the
+        // caller's level is only a last-resort fallback for a bulb with no level of its own yet.
+        Integer rowLevel = clampInt(intOrDefault(child?.currentValue('level'), level), PERCENT_MIN, PERCENT_MAX)
+        Integer brightness = scalePercentToLifx(rowLevel)
         List<Integer> payload
+        Integer safeKelvin = null
         if (rowIsColourCapable(row)) {
+            safeKelvin = clampKelvin(row, kelvin ?: 3500)
             payload = buildHsbkPayload(scalePercentToLifx(hue100), scalePercentToLifx(sat100), brightness, safeKelvin, durationMs)
         } else {
-            // Non-colour-capable lights receive only the requested brightness level.
-            payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
+            // Non-colour-capable lights receive only the requested brightness level. colorTemperature
+            // isn't part of Hubitat's standard ColorMap contract, so an ordinary RGB colour command
+            // (e.g. "Red") never actually supplies one - using the command's kelvin (which then
+            // defaults to 3500) here would silently reset every Tunable White bulb's colour temperature
+            // on every Master Switch colour command. Preserve each bulb's own current colour
+            // temperature instead, same pattern already used by sendBulkSetLevel().
+            Integer preservedKelvin = clampKelvin(row, safeInt(child?.currentValue('colorTemperature')) ?: safeInt(row.defaultKelvin) ?: safeInt(row.minKelvin) ?: kelvin ?: 3500)
+            payload = buildHsbkPayload(0, 0, brightness, preservedKelvin, durationMs)
         }
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
-        if (level > 0) {
+        if (rowLevel > 0) {
             sendPowerOnIfNeeded(row, child, durationMs)
         } else {
             // LIFX tracks power separately from brightness, so a level-0 colour packet alone
@@ -2913,18 +2832,16 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
             // switch:off event published below reflects real bulb state.
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
         }
-    }
-    rows.each { row ->
-        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
-                if (rowIsColourCapable(row as Map)) {
+                if (rowIsColourCapable(row)) {
                     child.sendEvent(name: "hue", value: hue100)
                     child.sendEvent(name: "saturation", value: sat100)
                     child.sendEvent(name: "colorMode", value: "RGB")
+                    child.sendEvent(name: "colorName", value: deriveColorName(hue100, sat100, safeKelvin))
                 }
-                child.sendEvent(name: "level", value: level)
-                child.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
+                child.sendEvent(name: "level", value: rowLevel)
+                child.sendEvent(name: "switch", value: rowLevel > 0 ? "on" : "off")
             } catch (Throwable t) { log.debug "sendBulkSetColorOrLevel() child sendEvent failed: ${t.message}" }
         }
     }
@@ -2933,11 +2850,17 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
 void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
-    Integer lvl = clampInt(intOrDefault(level, 75), PERCENT_MIN, PERCENT_MAX)
-    Integer brightness = scalePercentToLifx(lvl)
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
+        // See childSetColorTemperature(): a real SET_COLOR (sent below) cancels any running effect.
+        effectActiveAndClear(child)
+        // Same principle as sendBulkSetColorOrLevel(): preserve each bulb's own current level
+        // rather than forcing the whole fleet to the Master Switch's own (possibly null/stale,
+        // previously hardcoded-75%-on-fallback) level as a side effect of a colour-temperature-only
+        // command. The caller's level is only a last-resort fallback for a bulb with none of its own.
+        Integer lvl = clampInt(intOrDefault(child?.currentValue('level'), level), PERCENT_MIN, PERCENT_MAX)
+        Integer brightness = scalePercentToLifx(lvl)
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3000)
         List<Integer> payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
@@ -2948,19 +2871,19 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
             // power the bulb off, so send the matching SET_POWER off explicitly.
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
         }
-    }
-    rows.each { row ->
-        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
                 // Mono White devices declare no ColorTemperature attribute/capability, so only
                 // emit CT-related events to rows that actually support it - level/switch apply to
                 // every device type regardless.
-                if (rowSupportsColorTemperature(row as Map)) {
-                    child.sendEvent(name: "colorTemperature", value: clampKelvin(row as Map, kelvin ?: 3000))
+                if (rowSupportsColorTemperature(row)) {
+                    child.sendEvent(name: "colorTemperature", value: safeKelvin)
                     child.sendEvent(name: "hue", value: 0)
                     child.sendEvent(name: "saturation", value: 0)
                     child.sendEvent(name: "colorMode", value: "CT")
+                    // colorName is only declared on the colour-capable drivers, not Tunable White -
+                    // rowSupportsColorTemperature() above is intentionally broader than that.
+                    if (rowIsColourCapable(row)) child.sendEvent(name: "colorName", value: deriveColorName(0, 0, safeKelvin))
                 }
                 child.sendEvent(name: "level", value: lvl)
                 child.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
@@ -3022,8 +2945,91 @@ void childOn(device) {
     requestMasterStateReconciliation()
 }
 
+// Any handler that sends a real SET_COLOR (as opposed to a plain SET_POWER) cancels a running
+// Breathe/Pulse waveform on the bulb - not just Off. Clears the effectActive flag so a later Off
+// doesn't wrongly think an effect is still running and force an unwanted colour reset. Returns
+// whether an effect was actually active, so callers that would otherwise replay stale cached
+// hue/saturation/colorTemperature (frozen at the effect's base colour since it started, not the
+// bulb's live position) know to fall back to a defined default instead.
+private Boolean effectActiveAndClear(device) {
+    if (!device) return false
+    Boolean wasActive = (device.getDataValue("effectActive") ?: "false") == "true"
+    if (wasActive) {
+        try { device.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "effectActiveAndClear() updateDataValue failed: ${t.message}" }
+    }
+    return wasActive
+}
+
+// The Colour/Plus Colour drivers now expose their own "Default level"/"Default colour temperature"
+// preferences (same pattern as the Master Switch's existing defaultCtLevel/defaultColorTemperature),
+// used when Off cancels an active Breathe/Pulse effect - each bulb comes back to its own configured
+// default instead of one hardcoded value shared by the whole fleet. Falls back to
+// EFFECT_RESET_LEVEL/EFFECT_RESET_KELVIN if the device has no preference of its own yet (e.g. an
+// older device that predates this feature, or getSetting() being unavailable for any reason).
+private Integer deviceDefaultLevel(device) {
+    try {
+        def v = device?.getSetting("defaultLevel")
+        if (v != null) return clampInt(safeInt(v) ?: EFFECT_RESET_LEVEL, PERCENT_MIN, PERCENT_MAX)
+    } catch (Throwable t) { log.debug "deviceDefaultLevel() getSetting failed: ${t.message}" }
+    return EFFECT_RESET_LEVEL
+}
+
+private Integer deviceDefaultKelvin(device) {
+    try {
+        def v = device?.getSetting("defaultColorTemperature")
+        if (v != null) return safeInt(v) ?: EFFECT_RESET_KELVIN
+    } catch (Throwable t) { log.debug "deviceDefaultKelvin() getSetting failed: ${t.message}" }
+    return EFFECT_RESET_KELVIN
+}
+
+// Best-effort nearest-match colorName against the same NAMED_COLORS palette already used for the
+// Rule Machine breathe/pulse presets, so the label stays meaningfully in sync with the device's
+// actual hue/saturation/colorTemperature instead of frozen at whatever it was at device creation
+// (colorName is otherwise never republished by any command handler once initialiseGoogleSafeState()
+// sets its one-time default). Not exact - the colour picker offers far more colours than 11 named
+// presets - just the nearest match, same spirit as any other device's generic colour-name attribute.
+private String deriveColorName(Integer hue100, Integer sat100, Integer kelvin) {
+    Integer hue = hue100 ?: 0
+    Integer sat = sat100 ?: 0
+    Integer kel = kelvin ?: 3500
+    String bestName = null
+    Integer bestDist = null
+    // Near-zero saturation reads as white/CT regardless of hue - match by colour temperature
+    // against the palette's White-family entries (the ones with saturation 0) instead of hue.
+    Boolean matchWhite = sat <= 5
+    NAMED_COLORS.each { name, hsk ->
+        Boolean isWhiteEntry = (hsk[1] ?: 0) == 0
+        if (isWhiteEntry != matchWhite) return
+        Integer dist
+        if (matchWhite) {
+            dist = Math.abs((hsk[2] ?: 3500) - kel)
+        } else {
+            Integer diff = Math.abs((hsk[0] ?: 0) - hue)
+            dist = Math.min(diff, 100 - diff) // hue is a wraparound 0-100 scale
+        }
+        if (bestDist == null || dist < bestDist) { bestDist = dist; bestName = name }
+    }
+    return bestName ?: "Soft White"
+}
+
 void childOff(device) {
     Map row = rowForManagedChild(device)
+    if ((device?.getDataValue("effectActive") ?: "false") == "true") {
+        // See deviceDefaultLevel(): cancel the running waveform with a real SET_COLOR before the
+        // power-off packet, so it doesn't silently resume next time the light is turned on.
+        Integer resetLevel = deviceDefaultLevel(device)
+        Integer resetKelvin = deviceDefaultKelvin(device)
+        sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, buildHsbkPayload(0, 0, scalePercentToLifx(resetLevel), resetKelvin, 0))
+        try {
+            device.sendEvent(name: "hue", value: 0)
+            device.sendEvent(name: "saturation", value: 0)
+            device.sendEvent(name: "level", value: resetLevel)
+            device.sendEvent(name: "colorTemperature", value: resetKelvin)
+            device.sendEvent(name: "colorMode", value: "CT")
+            if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, resetKelvin))
+        } catch (Throwable t) { log.debug "childOff() effect-reset sendEvent failed: ${t.message}" }
+        try { device.updateDataValue("effectActive", "false") } catch (Throwable t) { log.debug "childOff() updateDataValue failed: ${t.message}" }
+    }
     sendSetPower(row, LIFX_FULL_OFF, 0)
     try { device.sendEvent(name: "switch", value: "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
     requestMasterStateReconciliation()
@@ -3033,25 +3039,53 @@ void childSetLevel(device, value, duration = 0) {
     Integer level = clampInt(safeInt(value) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Map row = rowForManagedChild(device)
     Integer durMs = durationMs(duration)
+    Boolean effectWasActive = effectActiveAndClear(device)
     if (level <= 0) {
         // LIFX tracks power separately from brightness, so dimming to 0 via SET_COLOR alone
         // leaves the bulb physically powered - a genuine level-0 request needs a real
         // SET_POWER off, matching what an explicit Off command sends.
+        Integer resetKelvin = effectWasActive ? deviceDefaultKelvin(device) : null
+        if (effectWasActive) {
+            // See deviceDefaultLevel(): cancel the running waveform with a real SET_COLOR before the
+            // power-off packet, same as childOff() - dragging the level slider to 0 is otherwise
+            // just as capable of silently leaving an effect resumable as an explicit Off is.
+            sendSetColor(row, 0, 0, scalePercentToLifx(deviceDefaultLevel(device)), resetKelvin, 0)
+        }
         sendSetPower(row, LIFX_FULL_OFF, durMs)
         try {
             device.sendEvent(name: "level", value: 0)
             device.sendEvent(name: "switch", value: "off")
+            if (effectWasActive) {
+                device.sendEvent(name: "hue", value: 0)
+                device.sendEvent(name: "saturation", value: 0)
+                device.sendEvent(name: "colorTemperature", value: resetKelvin)
+                device.sendEvent(name: "colorMode", value: "CT")
+                if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, resetKelvin))
+            }
         } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
         requestMasterStateReconciliation()
         return
     }
-    Integer kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
-    // Only replay the cached colour if the light is actually showing it right now (colorMode RGB) -
-    // otherwise a stale leftover hue/saturation would drag a CT/white light back to an old colour as
-    // a side effect of a pure brightness change.
-    Boolean isRgb = (device.currentValue('colorMode') ?: '').toString() == 'RGB'
-    Integer hue = isRgb ? scalePercentToLifx(device.currentValue('hue') ?: 0) : 0
-    Integer sat = isRgb ? scalePercentToLifx(device.currentValue('saturation') ?: 0) : 0
+    Integer kelvin
+    Integer hue
+    Integer sat
+    if (effectWasActive) {
+        // Cached hue/saturation/colorTemperature are frozen at whatever the effect's base colour
+        // was when it started (see runColorEffect()), not the bulb's live in-animation position -
+        // replaying them here would freeze the light on that stale colour as a side effect of a
+        // plain brightness change. Fall back to the device's own default (same as Off) instead.
+        kelvin = deviceDefaultKelvin(device)
+        hue = 0
+        sat = 0
+    } else {
+        kelvin = clampKelvin(row, safeInt(device.currentValue('colorTemperature')) ?: safeInt(row.minKelvin) ?: 3500)
+        // Only replay the cached colour if the light is actually showing it right now (colorMode
+        // RGB) - otherwise a stale leftover hue/saturation would drag a CT/white light back to an
+        // old colour as a side effect of a pure brightness change.
+        Boolean isRgb = (device.currentValue('colorMode') ?: '').toString() == 'RGB'
+        hue = isRgb ? scalePercentToLifx(device.currentValue('hue') ?: 0) : 0
+        sat = isRgb ? scalePercentToLifx(device.currentValue('saturation') ?: 0) : 0
+    }
     Integer bri = scalePercentToLifx(level)
     sendSetColor(row, hue, sat, bri, kelvin, durMs)
     // LIFX tracks power separately from brightness, so setLevel() alone won't wake a bulb that's
@@ -3060,13 +3094,25 @@ void childSetLevel(device, value, duration = 0) {
     try {
         device.sendEvent(name: "level", value: level)
         device.sendEvent(name: "switch", value: "on")
+        if (effectWasActive) {
+            device.sendEvent(name: "hue", value: 0)
+            device.sendEvent(name: "saturation", value: 0)
+            device.sendEvent(name: "colorTemperature", value: kelvin)
+            device.sendEvent(name: "colorMode", value: "CT")
+            if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, kelvin))
+        }
     } catch (Throwable t) { log.debug "childSetLevel() sendEvent failed: ${t.message}" }
     requestMasterStateReconciliation()
-    // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
+    // No blocking inline refresh after SET commands - events are updated optimistically.
 }
 
 void childSetColorTemperature(device, temp, level = null, duration = 0) {
     Map row = rowForManagedChild(device)
+    // A real SET_COLOR (sent below regardless of branch) cancels any running Breathe/Pulse waveform,
+    // so clear the flag or a later Off would wrongly think an effect is still active and force an
+    // unwanted colour reset - this command already sets its own explicit kelvin/hue/saturation, so
+    // unlike childSetLevel() there's no stale-colour-replay concern to also guard against.
+    effectActiveAndClear(device)
     Integer kelvin = clampKelvin(row, safeInt(temp) ?: 3500)
     Integer lvl = clampInt(firstNonNullInt([level, device.currentValue('level')], 100), PERCENT_MIN, PERCENT_MAX)
     Integer durMs = durationMs(duration)
@@ -3085,17 +3131,28 @@ void childSetColorTemperature(device, temp, level = null, duration = 0) {
         device.sendEvent(name: "hue", value: 0)
         device.sendEvent(name: "saturation", value: 0)
         device.sendEvent(name: "colorMode", value: "CT")
+        if (rowIsColourCapable(row)) device.sendEvent(name: "colorName", value: deriveColorName(0, 0, kelvin))
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "childSetColorTemperature() sendEvent failed: ${t.message}" }
     requestMasterStateReconciliation()
-    // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
+    // No blocking inline refresh after SET commands - events are updated optimistically.
 }
 
 void childSetColor(device, Map colorMap, duration = 0) {
     Map row = rowForManagedChild(device)
+    // See childSetColorTemperature(): a real SET_COLOR (sent below) cancels any running effect, so
+    // clear the flag here too.
+    effectActiveAndClear(device)
     Integer hue100 = clampInt(safeInt(colorMap?.hue) ?: 0, PERCENT_MIN, PERCENT_MAX)
     Integer sat100 = clampInt(intOrDefault(colorMap?.saturation, 100), PERCENT_MIN, PERCENT_MAX)
-    Integer lvl = clampInt(firstNonNullInt([colorMap?.level, colorMap?.brightness], 100), PERCENT_MIN, PERCENT_MAX)
+    // Level is independent of colour and must be preserved, not accepted from the colour command -
+    // Hubitat's own built-in "Choose a colour" picker bundles a swatch-specific level with every
+    // colour tap (confirmed live: different swatches carried different levels - e.g. red 85%, purple
+    // 41%, green 58%), which silently changed brightness as a side effect of picking a colour. Same
+    // principle already applied to the Master Switch's bulk colour commands (see sendBulkSetColorOrLevel()).
+    // The colour map's level/brightness field is only a last-resort fallback for a device with no
+    // level of its own yet.
+    Integer lvl = clampInt(intOrDefault(device.currentValue('level'), firstNonNullInt([colorMap?.level, colorMap?.brightness], 100)), PERCENT_MIN, PERCENT_MAX)
     Integer kelvin = clampKelvin(row, safeInt(colorMap?.colorTemperature ?: colorMap?.kelvin) ?: safeInt(device.currentValue('colorTemperature')) ?: 3500)
     Integer durMs = durationMs(duration)
     sendSetColor(row, scalePercentToLifx(hue100), scalePercentToLifx(sat100), scalePercentToLifx(lvl), kelvin, durMs)
@@ -3114,10 +3171,11 @@ void childSetColor(device, Map colorMap, duration = 0) {
         device.sendEvent(name: "level", value: lvl)
         device.sendEvent(name: "colorTemperature", value: kelvin)
         device.sendEvent(name: "colorMode", value: "RGB")
+        device.sendEvent(name: "colorName", value: deriveColorName(hue100, sat100, kelvin))
         device.sendEvent(name: "switch", value: lvl > 0 ? "on" : "off")
     } catch (Throwable t) { log.debug "childSetColor() sendEvent failed: ${t.message}" }
     requestMasterStateReconciliation()
-    // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
+    // No blocking inline refresh after SET commands - events are updated optimistically.
 }
 
 void childSetHue(device, value) {
@@ -3134,7 +3192,7 @@ void childSetInfraredLevel(device, value) {
     sendLifxToRow(row, LIFX_MSG.LIGHT_SET_INFRARED, u16le(scalePercentToLifx(level)), true, false, "parseChildLifx", 1, 0) // ack requested
     try { device.sendEvent(name: "IRLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(IRLevel) failed: ${t.message}" }
     try { device.sendEvent(name: "infraredLevel", value: level) } catch (Throwable t) { log.debug "sendEvent(infraredLevel) failed: ${t.message}" }
-    // v4.7.3: no blocking inline refresh after SET commands; original app updates events optimistically.
+    // No blocking inline refresh after SET commands - events are updated optimistically.
 }
 
 // Resolves a named colour preset (see NAMED_COLORS) to [hue100, saturation100, kelvin] - falls
@@ -3190,6 +3248,23 @@ private void runColorEffect(Map row, device, String baseColorName, String target
         scalePercentToLifx(target[0]), scalePercentToLifx(target[1]),
         scalePercentToLifx(targetLevel), clampKelvin(row, target[2]), periodMs, waveform)
     sendLifxToRow(row, LIFX_MSG.LIGHT_SET_WAVEFORM, payload, false, false, "parseChildLifx", 1, 0)
+    // Every other command handler publishes an optimistic event after sending its packets -
+    // this one didn't, so Hubitat's own switch/colour attributes stayed stale (e.g. "off") even
+    // though the bulb was genuinely powered on and actively running the effect, since
+    // sendPowerOnIfNeeded() only sends the LIFX packet and never updates tracked state itself.
+    try {
+        device?.sendEvent(name: "hue", value: base[0])
+        device?.sendEvent(name: "saturation", value: base[1])
+        device?.sendEvent(name: "level", value: baseLevel)
+        device?.sendEvent(name: "colorTemperature", value: baseKelvin)
+        device?.sendEvent(name: "colorMode", value: "RGB")
+        device?.sendEvent(name: "colorName", value: deriveColorName(base[0], base[1], baseKelvin))
+        device?.sendEvent(name: "switch", value: baseLevel > 0 ? "on" : "off")
+    } catch (Throwable t) { log.debug "runColorEffect() sendEvent failed: ${t.message}" }
+    // Marks this device so Off knows to cancel the waveform (see EFFECT_RESET_LEVEL) before
+    // powering off, instead of leaving it to silently resume next time the light is turned on.
+    try { device?.updateDataValue("effectActive", "true") } catch (Throwable t) { log.debug "runColorEffect() updateDataValue failed: ${t.message}" }
+    requestMasterStateReconciliation()
 }
 
 void childBreathe(device, baseColorName, targetColorName, speedSeconds = null, baseBrightness = null, targetBrightness = null) {
@@ -3227,9 +3302,9 @@ void refreshChildSoon(device, Integer delayMs = 350) {
 }
 
 void sendSetPower(Map row, Integer power, Integer durationMs = 0) {
-    // v4.7.1: same fast packet path as the aggregate group. This matters when a
-    // Hubitat group calls every child on/off individually; each child now emits
-    // one lightweight UDP packet instead of a multi-candidate ACK command.
+    // Same fast packet path as the aggregate group. This matters when a Hubitat group
+    // calls every child on/off individually; each child now emits one lightweight UDP
+    // packet instead of a multi-candidate ACK command.
     sendFastUdpToIp(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(power, durationMs))
 }
 
@@ -3297,7 +3372,9 @@ def parseChildLifx(response) {
             return // LIFX acknowledgement for SET workflows
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE) {
             Map light = parseLightState(parsed.payloadHex)
+            Integer hue100 = scaleDown100(light.hue ?: 0)
             Integer saturation = scaleDown100(light.saturation ?: 0)
+            Integer kelvin = (light.kelvin ?: 3500) as Integer
             // "label" reflects Hubitat's own local naming (see childLabelForRow()), set at child
             // creation/rename time - the physical bulb's raw label is intentionally not synced
             // back on refresh, since that would silently overwrite a user's local rename.
@@ -3307,18 +3384,19 @@ def parseChildLifx(response) {
             // declares ColorTemperature but not ColorControl - only emit the events a device's
             // driver actually declares a capability for.
             if (rowIsColourCapable(row)) {
-                child.sendEvent(name: "hue", value: scaleDown100(light.hue ?: 0))
+                child.sendEvent(name: "hue", value: hue100)
                 child.sendEvent(name: "saturation", value: saturation)
             }
             if (rowSupportsColorTemperature(row)) {
-                child.sendEvent(name: "colorTemperature", value: light.kelvin ?: 3500)
+                child.sendEvent(name: "colorTemperature", value: kelvin)
             }
-            // A LightState response is the only place colorMode can be reconciled with the bulb's
-            // actual reported saturation - without this, a light recoloured outside Hubitat (e.g.
-            // from the LIFX app) kept a stale colorMode, and the next brightness-only command would
-            // then desaturate it back to white.
+            // A LightState response is the only place colorMode/colorName can be reconciled with the
+            // bulb's actual reported state - without this, a light recoloured outside Hubitat (e.g.
+            // from the LIFX app or a physical control) kept a stale colorMode/colorName, and the next
+            // brightness-only command would then desaturate it back to white.
             if (rowIsColourCapable(row)) {
                 child.sendEvent(name: "colorMode", value: saturation > 0 ? "RGB" : "CT")
+                child.sendEvent(name: "colorName", value: deriveColorName(hue100, saturation, kelvin))
             }
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_POWER) {
             Integer power = leU16(parsed.payloadHex, 0)
@@ -3386,7 +3464,16 @@ Integer scaleDown100(value) {
 
 Integer durationMs(value) {
     if (value == null) return 0
-    try { return Math.max(0, Math.round((value as BigDecimal) * 1000.0d) as Integer) } catch (Throwable t) { log.debug "durationMs() failed: ${t.message}"; return 0 }
+    try {
+        // Clamp in BigDecimal space before the narrowing Integer cast - the previous Math.round()
+        // returned a long, and casting an out-of-range long to Integer silently wraps instead of
+        // throwing, same failure mode as the resolvePeriodMs() overflow fixed in 1.5.8.
+        BigDecimal ms = (value as BigDecimal) * 1000G
+        return ms.max(0G).min(new BigDecimal(Integer.MAX_VALUE)).intValue()
+    } catch (Throwable t) {
+        log.debug "durationMs() failed: ${t.message}"
+        return 0
+    }
 }
 
 Integer clampInt(Integer v, Integer lo, Integer hi) {
@@ -3460,7 +3547,7 @@ String curatedTableHtml() {
         b << cell(r.status ?: (r.ip ? "LAN IP saved" : "LAN IP missing"), 9)
         b << "</tr>"
     }
-    b << "</table>"
+    b << "</table></div>"
     return b.toString()
 }
 
@@ -3498,7 +3585,7 @@ String cloudTableHtml() {
         b << cell(d.ip ? "LAN IP found" : "LAN IP missing", 9)
         b << "</tr>"
     }
-    b << "</table>"
+    b << "</table></div>"
     return b.toString()
 }
 
@@ -3526,7 +3613,7 @@ String lanTableHtml() {
         b << cell(dev.expectedFromCloud == true ? "yes - ${dev.cloudMatchType ?: 'matched'}" : "no", null, "status")
         b << "</tr>"
     }
-    b << "</table>"
+    b << "</table></div>"
     return b.toString()
 }
 
@@ -3644,24 +3731,6 @@ Map findCuratedMatchForLanUid(String lanUid, Map cloud) {
     return null
 }
 
-Map findLanRecordForCloudId(String cloudId, Map records) {
-    String cid = normalisedUid(cloudId)
-    if (!cid || !records) return null
-
-    // 1. Exact match wins.
-    Map exact = records[cid] as Map
-    if (exact) return exact
-
-    // 2. Unique adjacent match.
-    List matches = []
-    records.each { lanUid, dev ->
-        String type = uidMatchType(cid, lanUid?.toString())
-        if (type == "cloud+1" || type == "cloud-1") matches << (dev as Map)
-    }
-
-    return matches.size() == 1 ? matches[0] as Map : null
-}
-
 String uidMatchType(String cloudUid, String lanUid) {
     String c = normalisedUid(cloudUid)
     String l = normalisedUid(lanUid)
@@ -3711,8 +3780,11 @@ Boolean truthy(value) {
     return value.toString().equalsIgnoreCase("true")
 }
 
+// Wrapped in its own scrollable div, since Hubitat's page container otherwise just clips a table
+// wider than the screen on mobile with no way to reach the rest of it - this makes it swipeable
+// instead, without changing anything about the table's own columns/layout.
 String tableOpenHtml() {
-    "<table style='width:auto;border-collapse:collapse;font-size:12px;table-layout:auto;user-select:text'>"
+    "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%'><table style='width:auto;border-collapse:collapse;font-size:12px;table-layout:auto;user-select:text'>"
 }
 
 // Each <table> auto-sizes its own columns independently, so the same UID/Label/IP/Last seen

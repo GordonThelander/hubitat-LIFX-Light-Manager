@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.5.8
+**Version:** 1.6.0
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -21,7 +21,9 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports an on-demand firmware version check over LAN for every saved device, including ones not yet installed as child devices.
 - Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table.
 - Supports optional hourly background maintenance (Discovery, firmware check, WiFi signal check) so the device table stays current without opening the app.
-- Supports native LIFX **Breathe** and **Pulse** colour effects as Rule Machine Custom Actions, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) below.
+- Supports native LIFX **Breathe** and **Pulse** colour effects as Rule Machine Custom Actions, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) below. Turning a light off while an effect is running now cancels it, instead of it silently resuming next time the light comes on.
+- Each local driver has its own configurable default level/colour temperature and an Apply Default command, used both on demand and whenever Off needs to cancel a running Breathe/Pulse effect.
+- The `colorName` attribute (e.g. "Soft White", "Red") stays accurate to the bulb's actual colour, including colour changes made outside Hubitat.
 - Driver format compatibility with Google Home that exposes device capabilities (known issue that colour has to be set once outside of Goole Home and then to use Google to change the colour manually to lock in the RGB capability)  
 
 ## Components
@@ -133,12 +135,12 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.5.8 |
-| App | 1.5.8 |
-| White Mono driver | 1.5.4 |
-| Tunable White driver | 1.5.4 |
-| Colour driver | 1.5.4 |
-| Plus Colour driver | 1.5.4 |
+| Package | 1.6.0 |
+| App | 1.6.0 |
+| White Mono driver | 1.5.6 |
+| Tunable White driver | 1.5.6 |
+| Colour driver | 1.5.7 |
+| Plus Colour driver | 1.5.7 |
 | Master Switch driver | 1.5.4 |
 
 ## Known limitations
@@ -153,6 +155,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.6.0:** Correctness and reliability release, plus two new features. Breathe/Pulse effects now properly integrate with Hubitat's own state: starting an effect updates the switch/colour attributes correctly (previously stayed stale), and turning a light off while an effect is running now cancels it instead of letting it silently resume next time the light comes on - touching level, colour or colour temperature while an effect is running also now cleanly stops it, instead of occasionally freezing on a stale colour or causing an unwanted reset later. New: each local driver has its own configurable default level/colour temperature and an Apply Default command, also used when Off needs to cancel a running effect, instead of one fixed value shared by the whole fleet. New: the `colorName` attribute now stays accurate to the bulb's actual colour, including colour changes made outside Hubitat (LIFX app, physical control), instead of being frozen at whatever it showed when the device was first created. Master Switch colour and colour-temperature commands no longer force every bulb in the fleet to a single shared brightness level or reset Tunable White bulbs' colour temperature - each bulb's own level/colour temperature is preserved, and the same brightness-preservation fix applies to an individual bulb's own built-in colour picker. LAN-only discovery (a device with no LIFX Cloud presence) is now reliably found on every Discovery run, and a device that rejoins LIFX Cloud after being LAN-only no longer risks a duplicate device being created. Several other correctness fixes: a canonical-identity overwrite that could risk a duplicate child device on rediscovery, numeric overflow edge cases in duration/colour-temperature parsing, and a driver-mismatch detection bug. Mobile: the device tables can now be scrolled horizontally instead of being clipped at the screen edge.
 
 **1.5.8:** Correctness and reliability maintenance release covering four fixes and two label changes found since 1.5.4. Fixed a canonical-identity overwrite where a device that missed a routine reachability check could have its LAN identity cleared for matching purposes, risking a later rediscovery overwriting an already-installed device's identity and creating a duplicate child, or the row-cleanup tool offering to delete a row whose device still exists - a reachability check now only clears reachability data, not identity, for a row with an installed child. LAN-discovered devices with no LIFX Cloud presence are now trackable and creatable even when the rest of the fleet's cloud connectivity is healthy, not just during a full cloud outage. The device preparation table was relabelled and restructured for clarity (`Cloud ID`, `Cloud Name`, `Current Status`, `Driver Capabilities`, with `Cloud connected` moved next to `Cloud Name` and the redundant `Capabilities` column removed). A Master Switch-only child create/update now reports success in the result message instead of only reporting failure. A detected driver mismatch no longer overwrites a row's own record of the installed driver with the one that was expected. Breathe/Pulse speed parsing now clamps before converting to milliseconds, avoiding a silent overflow on an extreme input value. Renamed "Remove stale saved rows" to "Remove rows without an installed device", and "Clear all Data" to "Clear saved discovery data" with an explicit note that installed devices are unaffected.
 
