@@ -13,17 +13,9 @@ live and tracked in `BACKLOG.md` under "Fixed, pending backport to main" - not r
 
 SCROLL-01/02/03 all pass. Moved to `BACKLOG.md` under "Backported to main".
 
-## Removed the unreachable "rename an installed child device" feature (originally 1.5.18, still not yet confirmed)
+## Removed the unreachable "rename an installed child device" feature (originally 1.5.18) - confirmed live 2026-07-21
 
-This backend was never reachable through the UI (the render call was missing), so removing it
-can't regress anything a user was actually doing. The only thing worth confirming is that nothing
-else broke on the way out.
-
-| # | Test | Steps | Expected |
-|---|------|-------|----------|
-| CLEANUP-01 | App still loads and renders normally | Open the app's main page after upload | No errors, page renders exactly as before - no "Child device rename" section ever appeared, so nothing should look different |
-| CLEANUP-02 | Renaming a discovered/installed light still works | Use the existing "Optional alternative local name" field next to a light in the Device preparation table (the one shown in the screenshot), then click Apply local names | Still renames the light correctly, both the row and (if already installed) the live Hubitat device label |
-| CLEANUP-03 | Clear saved discovery data still works normally | Click "Clear saved discovery data" | Behaves as before - installed devices unaffected, table clears. (This is the one scenario the removed feature would have handled differently; confirms losing that edge case isn't otherwise disruptive.) |
+CLEANUP-01/02/03 all pass. Moved to `BACKLOG.md` under "Backported to main".
 
 ## Batch 1 of the external ChatGPT review fixes (1.6.1, not yet confirmed)
 
