@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.9
+ * Version: 1.5.10
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -104,6 +104,17 @@
  * - durationMs() clamps in BigDecimal space before converting to Integer, same overflow fix pattern
  *   as resolvePeriodMs() in 1.5.8, for the duration/transitionTime parameter on colour/level commands.
  *
+ * 1.5.10 - found live-hub testing 1.5.9 (CT-01/CT-02): Master Switch colour/CT commands no longer
+ * force the whole fleet to a single shared brightness level:
+ * - sendBulkSetColorOrLevel() and sendBulkSetColorTemperature() read device.currentValue('level')
+ *   from the Master Switch itself and applied that one value, unclamped-from-reality, to every bulb
+ *   in the fleet. When the Master's own level was null/stale (e.g. never explicitly synced), this
+ *   fell back to a hardcoded 75% and silently dropped every bulb's brightness to 75% as a side
+ *   effect of a pure colour or colour-temperature command - the opposite of the "level is
+ *   independent, colour commands must not change it" contract these functions already documented.
+ * - Both functions now read each bulb's own currentValue('level') individually and preserve it,
+ *   using the Master's level only as a last-resort fallback for a bulb with no level of its own yet.
+ *
  * Purpose:
  * - Save only the curated child-driver preparation table between app launches
  * - Run LIFX Cloud discovery and LAN IP discovery as separate actions
@@ -146,7 +157,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.5.9"
+@Field static final String APP_VERSION = "1.5.10"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3014,10 +3025,18 @@ Boolean rowSupportsColorTemperature(Map row) {
 void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Integer kelvin, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
-    Integer brightness = scalePercentToLifx(level)
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
+        // Level is independent of colour and must be preserved per-bulb, not forced to a single
+        // fleet-wide value - the caller's "level" here comes from the Master Switch's own
+        // currentValue('level'), which can be null/stale (e.g. before it's ever been explicitly
+        // synced) and previously fell back to a hardcoded 75%, silently changing every bulb's
+        // brightness - including ones already at a different level - as a side effect of a pure
+        // colour command. Each bulb's own current level is the correct "unchanged" value; the
+        // caller's level is only a last-resort fallback for a bulb with no level of its own yet.
+        Integer rowLevel = clampInt(intOrDefault(child?.currentValue('level'), level), PERCENT_MIN, PERCENT_MAX)
+        Integer brightness = scalePercentToLifx(rowLevel)
         List<Integer> payload
         if (rowIsColourCapable(row)) {
             Integer safeKelvin = clampKelvin(row, kelvin ?: 3500)
@@ -3033,7 +3052,7 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
             payload = buildHsbkPayload(0, 0, brightness, preservedKelvin, durationMs)
         }
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
-        if (level > 0) {
+        if (rowLevel > 0) {
             sendPowerOnIfNeeded(row, child, durationMs)
         } else {
             // LIFX tracks power separately from brightness, so a level-0 colour packet alone
@@ -3041,18 +3060,15 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
             // switch:off event published below reflects real bulb state.
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
         }
-    }
-    rows.each { row ->
-        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
-                if (rowIsColourCapable(row as Map)) {
+                if (rowIsColourCapable(row)) {
                     child.sendEvent(name: "hue", value: hue100)
                     child.sendEvent(name: "saturation", value: sat100)
                     child.sendEvent(name: "colorMode", value: "RGB")
                 }
-                child.sendEvent(name: "level", value: level)
-                child.sendEvent(name: "switch", value: level > 0 ? "on" : "off")
+                child.sendEvent(name: "level", value: rowLevel)
+                child.sendEvent(name: "switch", value: rowLevel > 0 ? "on" : "off")
             } catch (Throwable t) { log.debug "sendBulkSetColorOrLevel() child sendEvent failed: ${t.message}" }
         }
     }
@@ -3061,11 +3077,15 @@ void sendBulkSetColorOrLevel(Integer hue100, Integer sat100, Integer level, Inte
 void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer durationMs = 0) {
     List<Map> rows = bulkControlRows()
     if (!rows) return
-    Integer lvl = clampInt(intOrDefault(level, 75), PERCENT_MIN, PERCENT_MAX)
-    Integer brightness = scalePercentToLifx(lvl)
     rows.each { item ->
         Map row = item as Map
         def child = getChildDevice(childDniForBulkRow(row))
+        // Same principle as sendBulkSetColorOrLevel(): preserve each bulb's own current level
+        // rather than forcing the whole fleet to the Master Switch's own (possibly null/stale,
+        // previously hardcoded-75%-on-fallback) level as a side effect of a colour-temperature-only
+        // command. The caller's level is only a last-resort fallback for a bulb with none of its own.
+        Integer lvl = clampInt(intOrDefault(child?.currentValue('level'), level), PERCENT_MIN, PERCENT_MAX)
+        Integer brightness = scalePercentToLifx(lvl)
         Integer safeKelvin = clampKelvin(row, kelvin ?: 3000)
         List<Integer> payload = buildHsbkPayload(0, 0, brightness, safeKelvin, durationMs)
         sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_COLOR, payload)
@@ -3076,16 +3096,13 @@ void sendBulkSetColorTemperature(Integer kelvin, Integer level = 75, Integer dur
             // power the bulb off, so send the matching SET_POWER off explicitly.
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_OFF, durationMs))
         }
-    }
-    rows.each { row ->
-        def child = getChildDevice(childDniForBulkRow(row as Map))
         if (child) {
             try {
                 // Mono White devices declare no ColorTemperature attribute/capability, so only
                 // emit CT-related events to rows that actually support it - level/switch apply to
                 // every device type regardless.
-                if (rowSupportsColorTemperature(row as Map)) {
-                    child.sendEvent(name: "colorTemperature", value: clampKelvin(row as Map, kelvin ?: 3000))
+                if (rowSupportsColorTemperature(row)) {
+                    child.sendEvent(name: "colorTemperature", value: safeKelvin)
                     child.sendEvent(name: "hue", value: 0)
                     child.sendEvent(name: "saturation", value: 0)
                     child.sendEvent(name: "colorMode", value: "CT")

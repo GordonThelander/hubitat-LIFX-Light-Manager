@@ -1,6 +1,6 @@
 # Backlog
 
-Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.9 (`dev`), verified against code, not taken on any reviewer's word.
+Known gaps not yet fixed, tracked here since there's no issue tracker for this project. Finding IDs (F-xx) trace back to the `LIFX_Light_Manager_1.5.2_Code_Review_and_Enhancement_Report.docx` external review; items without an F-xx were found during live-hub verification or later external re-review. Line numbers current as of 1.5.10 (`dev`), verified against code, not taken on any reviewer's word.
 
 ## Open — enhancement ideas (external architecture review, Gemini, 2026-07-21)
 
@@ -20,9 +20,9 @@ Not yet verified from the ChatGPT re-review (vaguer, no code citations checked):
 
 - **F-11 — Cloud snapshot rows accumulate without aging.** No successful-snapshot expiry/aging for Cloud-discovered rows. Scoped by the original report to 1.6.0; not started. Related but distinct from the 1.5.6 LAN-only fix - that made *new* cloud-less devices trackable, this is about *stale* cloud-linked rows never expiring.
 
-## Fixed, awaiting live-hub testing (1.5.9)
+## Fixed, awaiting live-hub testing (1.5.9-1.5.10)
 
-Implemented and compile-checked, not yet confirmed on real hardware - see `TEST_PLAN_1.5.9.md`.
+Implemented and compile-checked, not yet confirmed on real hardware - see `TEST_PLAN_1.5.9.md` (covers both versions).
 
 - **Master Switch colour commands reset Tunable White bulbs' colour temperature to a hardcoded 3500K.** `sendBulkSetColorOrLevel()`'s non-colour branch now preserves each bulb's own current colour temperature (`child.currentValue('colorTemperature')`, falling back to row defaults) instead of the command's kelvin, which defaulted to 3500 on any ordinary RGB colour command. Test plan: CT-01/02.
 
@@ -31,6 +31,8 @@ Implemented and compile-checked, not yet confirmed on real hardware - see `TEST_
 - **Potential duplicate row/child device if a LAN-only device is later re-added to LIFX Cloud.** `mergeCloudIntoCurated()` now reconciles into an existing LAN-only row (matched by exact or adjacent UID via the new `reconcilableLanOnlyKey()`) instead of creating a second, orphaned row. Test plan: LAN-03.
 
 - **`durationMs()` unbounded-overflow, same pattern as the `resolvePeriodMs()` bug fixed in 1.5.8.** Now clamps in `BigDecimal` space before the narrowing `Integer` cast. Test plan: DUR-01/02.
+
+- **1.5.10 - Master Switch colour/CT commands forced the whole fleet to one shared brightness level, found live while testing CT-01/02.** `sendBulkSetColorOrLevel()`/`sendBulkSetColorTemperature()` read `device.currentValue('level')` from the Master Switch itself and applied that single value to every bulb; when the Master's own level was null/stale, this fell back to a hardcoded 75% and silently dropped every bulb's brightness as a side effect of a pure colour or CT command - the opposite of the "level is independent" contract these functions already documented. Both now read and preserve each bulb's own `currentValue('level')` individually. Test plan: LVL-01/02/03.
 
 ## Fixed, pending backport to main
 
