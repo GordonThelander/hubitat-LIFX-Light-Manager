@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.6.2
+**Version:** 1.6.3
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -21,8 +21,9 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports Master Switch colour and colour-temperature control, applying colour to colour-capable lights and level-only changes to non-colour lights.
 - Supports optional lightweight LAN polling of installed child devices.
 - Supports an on-demand firmware version check over LAN for every saved device, including ones not yet installed as child devices.
-- Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table.
+- Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table where the device reports a genuine dBm reading (some LIFX generations report an alternate signal-quality scale instead, shown as such rather than mislabelled dBm).
 - Supports optional hourly background maintenance (Discovery, firmware check, WiFi signal check) so the device table stays current without opening the app.
+- LAN discovery auto-detects the hub's own /24 subnet, with an optional manual subnet-prefix override preference for networks larger than a /24 or on a different VLAN.
 - Supports native LIFX **Breathe** and **Pulse** colour effects as Rule Machine Custom Actions, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) below.
 - Google Home compatible via standard Hubitat capability exposure across all local drivers and the Master Switch, including full colour control.
 
@@ -135,12 +136,12 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.6.2 |
-| App | 1.6.2 |
-| White Mono driver | 1.5.6 |
-| Tunable White driver | 1.5.6 |
-| Colour driver | 1.5.7 |
-| Plus Colour driver | 1.5.7 |
+| Package | 1.6.3 |
+| App | 1.6.3 |
+| White Mono driver | 1.5.7 |
+| Tunable White driver | 1.5.7 |
+| Colour driver | 1.5.8 |
+| Plus Colour driver | 1.5.8 |
 | Master Switch driver | 1.5.4 |
 
 Tested on Hubitat Elevation platform version 2.5.0.159.

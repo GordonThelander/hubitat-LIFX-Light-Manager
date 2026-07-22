@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.2
+ * Version: 1.6.3
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.2"
+@Field static final String APP_VERSION = "1.6.3"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -322,6 +322,14 @@ void renderMainPageContent(Boolean advanced) {
     if (advanced) {
         section("<b>Advanced status</b>") {
             paragraph statusHtml()
+        }
+        section("<b>Network discovery</b>") {
+            paragraph "LAN discovery derives the hub's own /24 subnet automatically (e.g. a hub at 192.168.1.5 sweeps 192.168.1.1-254). Hubitat doesn't expose the hub's actual subnet mask, so this can't be auto-detected precisely - leave this blank unless your LIFX devices are genuinely outside the hub's own /24 (e.g. a larger /23 or /22 network, or a different VLAN)."
+            input "subnetPrefixOverride", "text",
+                title: "Optional subnet prefix override",
+                description: "Example: 10.0.1. (with the trailing dot). Leave blank for automatic detection.",
+                required: false,
+                submitOnChange: false
         }
         section("<b>Optional child status polling</b>") {
             paragraph "Polls installed LIFX child devices over LAN for on/off state only. This is intentionally lightweight and does not run firmware discovery or full device refresh."
@@ -639,6 +647,7 @@ void startLanDiscovery() {
 
 void mergeCloudIntoCurated(Map cloud) {
     Map curated = atomicState.curatedRows ?: [:]
+    Set<String> touchedKeys = [] as Set
     cloud.each { id, light ->
         Map c = light as Map
         String uid = normaliseCloudId(id)
@@ -676,8 +685,26 @@ void mergeCloudIntoCurated(Map cloud) {
         row.capability = cloudCapability(row)
         row.driverMode = cloudDriverMode(row)
         row.cloudUpdated = now()
+        // Reappearing after a prior "missing" call clears the flag - a device can legitimately
+        // rejoin LIFX Cloud (re-added to the account, connectivity restored on LIFX's side, etc.).
+        row.cloudMissing = false
         row.status = row.ip ? (row.status ?: "Cloud refreshed - LAN IP retained") : "Cloud refreshed - LAN IP missing"
         curated[key] = row
+        touchedKeys << key
+    }
+    // A device removed from (or no longer visible to) LIFX Cloud never gets touched by the loop
+    // above - only every call site of this function represents a confirmed successful full Cloud
+    // fetch (the single caller only reaches here after a genuine 2xx response), so "not touched
+    // this call" reliably means "no longer in Cloud", not "the fetch was partial/failed". Only
+    // rows already marked genuinely cloud-backed are considered - never touch row.origin itself,
+    // and never delete the row, so an installed child device survives this exactly like every
+    // other reconciliation path in this file already preserves it.
+    curated.each { key, value ->
+        Map row = value as Map
+        if (row.origin == "cloud" && !touchedKeys.contains(key)) {
+            row.cloudMissing = true
+            row.status = row.ip ? "No longer in LIFX Cloud - LAN IP retained" : "No longer in LIFX Cloud - LAN IP missing"
+        }
     }
     atomicState.curatedRows = curated
 }
@@ -1062,12 +1089,13 @@ Integer expectedCloudLanDiscoveryCount() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return 0
     // Cloud-led discovery should stop when all discoverable cloud-backed rows have LAN details.
-    // Offline cloud rows are excluded because they cannot reliably answer LAN probes. LAN-only rows
+    // Offline cloud rows are excluded because they cannot reliably answer LAN probes, and so are
+    // rows mergeCloudIntoCurated() has flagged as no longer present in Cloud at all. LAN-only rows
     // are excluded too - cloudUidForRow() can't tell a real Cloud ID from a LAN MAC repurposed as one
     // by mergeLanOnlyIntoCurated(), so row.origin is the actual signal for "genuinely cloud-backed".
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only"
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && row.cloudMissing != true
     }.size() as Integer
 }
 
@@ -1076,7 +1104,7 @@ Integer discoveredCloudLanCount() {
     if (!curated) return 0
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && ((row.ip ?: '').toString().trim())
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && row.cloudMissing != true && ((row.ip ?: '').toString().trim())
     }.size() as Integer
 }
 
@@ -1188,7 +1216,10 @@ def parseLifx(response) {
 
     Map dev = (records[mac] ?: [:]) as Map
     dev.ip = ip
-    dev.port = LIFX_PORT
+    // Only default to LIFX_PORT when no real port has been learned yet - a prior STATE_SERVICE
+    // response (see that case below) may have already recorded the device's actual advertised
+    // port, and every other LAN response for this device shouldn't clobber it back to the default.
+    dev.port = dev.port ?: LIFX_PORT
     dev.mac = mac
     dev.sourceMac = sourceMac
     dev.target = protocolTargetUid
@@ -1241,6 +1272,13 @@ def parseLifx(response) {
     switch (parsed.type as Integer) {
         case LIFX_MSG.STATE_SERVICE:
             stats.service = ((stats.service ?: 0) as Integer) + 1
+            Map service = parseStateServicePayload(parsed.payloadHex)
+            // service 1 == UDP per the LIFX LAN protocol; only trust a genuinely advertised UDP
+            // port. Every real LIFX device advertises 56700 in practice, but this stops a bogus
+            // or non-UDP-service payload from redirecting future packets to the wrong port.
+            if (service.service == 1 && service.port != null && service.port > 0) {
+                dev.port = service.port
+            }
             break
         case LIFX_MSG.STATE_VERSION:
             Map version = parseStateVersion(parsed.payloadHex)
@@ -1293,14 +1331,25 @@ def parseLifx(response) {
             Map wifi = parseWifiInfoPayload(parsed.payloadHex)
             if (c && wifi.rssi != null) {
                 c.wifiRssi = wifi.rssi
+                c.wifiRssiKind = wifi.kind
                 c.wifiCheckedAt = now()
                 def wifiChild = getChildDevice(childDniForRow(c))
                 if (wifiChild) {
                     try {
                         wifiChild.updateDataValue('rssi', wifi.rssi.toString())
-                        wifiChild.sendEvent(name: 'rssi', value: wifi.rssi, unit: 'dBm')
+                        // Only a genuine dBm reading gets the dBm unit label - the alternate
+                        // positive-value quality-band encoding is a different scale entirely.
+                        if (wifi.kind == "dbm") {
+                            wifiChild.sendEvent(name: 'rssi', value: wifi.rssi, unit: 'dBm')
+                        } else {
+                            wifiChild.sendEvent(name: 'rssi', value: wifi.rssi)
+                        }
                     } catch (Throwable t) { log.debug "wifi child data update failed: ${t.message}" }
                 }
+            } else if (c && wifi.noSignal) {
+                // A real check was performed and returned the "no signal" sentinel - still mark
+                // it as checked so the row doesn't look untested, just don't publish a bogus value.
+                c.wifiCheckedAt = now()
             }
             break
         case LIFX_MSG.STATE_GROUP:
@@ -1333,7 +1382,7 @@ def parseLifx(response) {
         String cloudId = cloudMatch.cloudId?.toString() ?: c.id?.toString()
         if (cloudId) {
             c.ip = ip
-            c.port = LIFX_PORT
+            c.port = dev.port
             // Once a row has an installed child device, its lanUid is already the DNI this app
             // committed to (lifxdev-curated-<lanUid>) - overwriting it here would silently orphan
             // the row from its real installed device the next time a response happens to report
@@ -1412,6 +1461,14 @@ Map parseStateVersion(String payloadHex) {
     [vendor: leU32(payloadHex, 0), product: leU32(payloadHex, 8), version: leU32(payloadHex, 16)]
 }
 
+Map parseStateServicePayload(String payloadHex) {
+    // STATE_SERVICE payload: service(u8) + port(u32).
+    if (!payloadHex || payloadHex.size() < 10) return [:]
+    Integer service = Integer.parseInt(payloadHex.substring(0, 2), 16)
+    Long port = leU32(payloadHex, 2)
+    return [service: service, port: port]
+}
+
 Map parseFirmwarePayload(String payloadHex) {
     // STATE_HOST_FIRMWARE payload: build(u64) + reserved(u64) + minor(u16) + major(u16).
     if (!payloadHex || payloadHex.size() < 40) return [:]
@@ -1424,12 +1481,19 @@ Map parseFirmwarePayload(String payloadHex) {
 Map parseWifiInfoPayload(String payloadHex) {
     // STATE_WIFI_INFO payload: signal(float32) + tx(u32) + rx(u32) + reserved(i16). Only signal
     // is used - it's a raw linear value, not already in dBm, hence the log10 conversion below
-    // (the same conversion community LIFX drivers use for this same field).
+    // (the same conversion community LIFX drivers use for this same field, and the officially
+    // documented LIFX conversion - see lan.developer.lifx.com/docs/information-messages).
     if (!payloadHex || payloadHex.size() < 8) return [:]
     Float signal = leFloat32(payloadHex, 0)
     if (signal == null || signal <= 0f) return [:]
-    Integer rssi = Math.floor(10 * Math.log10(signal) + 0.5).toInteger()
-    return [rssi: rssi]
+    Integer value = Math.floor(10 * Math.log10(signal) + 0.5).toInteger()
+    // LIFX documents three distinct bands for this converted value: negative = a genuine dBm
+    // reading (the normal case), exactly 200 = an explicit "no signal" sentinel (not a real
+    // reading), and small positive values (roughly 4-16+) = an alternate quality-band encoding
+    // some LIFX generations use instead of dBm - must never be displayed/labelled as dBm.
+    if (value == 200) return [rssi: null, noSignal: true]
+    if (value < 0) return [rssi: value, kind: "dbm"]
+    return [rssi: value, kind: "quality"]
 }
 
 
@@ -2755,6 +2819,13 @@ private void sendPowerOnIfNeeded(Map row, child, Integer durationMs = 0) {
     // LIFX tracks power state separately from colour/brightness, so a colour/CT/level command alone
     // won't wake a bulb that's physically off - matching Hue-style "set colour implies on" behaviour
     // requires an explicit power-on packet whenever the light isn't already known to be on.
+    //
+    // Known accepted limitation (GPT-02, see BACKLOG.md): this checks Hubitat's cached switch
+    // state, not the bulb's real one. If the light was turned off outside Hubitat since the last
+    // refresh, a subsequent command changes HSBK but won't re-power it. Deliberately not fixed -
+    // sending power-on unconditionally on every command adds a packet each time, and this app has
+    // a documented history of a real hub crash from LAN traffic overload. Consistent with how
+    // colour-mode staleness is already only reconciled on refresh/poll, not every command.
     try {
         if ((child?.currentValue('switch') ?: 'off') != 'on') {
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_ON, durationMs))
@@ -3546,7 +3617,7 @@ String curatedTableHtml() {
         String productDisplay = r.productName ?: r.productIdentifier ?: (r.lanProduct ? "LAN product ${r.lanProduct}" : "")
         b << cell(productDisplay, 5)
         b << cell(r.firmwareVersion ?: "")
-        b << cell(r.wifiRssi != null ? "${r.wifiRssi} dBm" : "")
+        b << cell(r.wifiRssi != null ? (r.wifiRssiKind == "dbm" ? "${r.wifiRssi} dBm" : "${r.wifiRssi} (signal quality)") : "")
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
         b << cell(r.status ?: (r.ip ? "LAN IP saved" : "LAN IP missing"), 9)
         b << "</tr>"
@@ -3969,6 +4040,15 @@ Integer nextSequence() {
 
 String hubSubnet() {
     try {
+        // Hubitat's app API doesn't expose the hub's actual subnet mask, so auto-detection below
+        // always assumes a /24 - this override exists for the genuine exception (a larger network,
+        // a different VLAN, etc.) without pretending to auto-detect something the platform can't tell us.
+        String override = subnetPrefixOverride?.toString()?.trim()
+        if (override) {
+            String candidate = override.endsWith(".") ? override : "${override}."
+            if (candidate ==~ /^(\d{1,3}\.){3}$/) return candidate
+            log.warn "subnetPrefixOverride '${override}' doesn't look like a valid subnet prefix (expected e.g. 10.0.1.) - falling back to automatic detection."
+        }
         String hubIp = location.hubs[0]?.localIP ?: location.hub?.localIP
         def m = hubIp =~ /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/
         if (m) return "${m[0][1]}."

@@ -1,7 +1,7 @@
 /*
  * LIFX Local White Mono (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.5.6
+ * Version: 1.5.7
  * Parent app: LIFX Light Manager (Dev) 1.5.17+
  * Full version history: see git log and BACKLOG.md. No colour temperature default here - this
  * device has no ColorTemperature capability at all.
@@ -109,6 +109,12 @@ private String fastSetPowerPacketHex(Integer power, Integer durationMs = 0) {
     return buildZeroTargetTaggedPacket(117, payload)
 }
 
+// Known accepted limitation (GPT-06, see BACKLOG.md): tagged=1 with a zero target is protocol-
+// non-conformant (tagged semantically means broadcast/all-devices) - this relies on IP-level UDP
+// unicast addressing alone to reach the right device. Works reliably in extensive live testing
+// with zero observed cross-device bleed. Deliberately not fixed - a real fix exists (the device's
+// own controlUid data value) but this is the most heavily live-tested path in the app for a
+// currently-theoretical risk.
 private String buildZeroTargetTaggedPacket(Integer messageType, List<Integer> payload = []) {
     Integer size = 36 + (payload?.size() ?: 0)
     List<Integer> bytes = []
