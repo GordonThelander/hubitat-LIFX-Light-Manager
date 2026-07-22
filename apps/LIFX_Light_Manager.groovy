@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.6
+ * Version: 1.6.7
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.6"
+@Field static final String APP_VERSION = "1.6.7"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3581,7 +3581,59 @@ Integer clampKelvin(Map row, value) {
 // like the app has hung, when phase is actually progressing normally.
 String phaseHtml() {
     String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
-    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>"
+    Integer pct = estimatedDiscoveryPercent()
+    String suffix = pct != null ? " (estimated ${pct}% complete)" : ""
+    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}${suffix}</div>"
+}
+
+// Rough, honestly-labelled estimate only - discovery moves through phases of uneven, variable
+// length (a slow Cloud API response, an early allExpectedFound() exit skipping later phases
+// entirely, etc. all shift real timing), so this is never meant to be a precise measure, just a
+// better sense of progress than the phase text alone. Only meaningful while a run is in flight -
+// null (no percentage shown) once idle, complete, or in an error/stopped state.
+Integer estimatedDiscoveryPercent() {
+    if (!isDiscoveryRunning()) return null
+    switch (atomicState.status ?: "idle") {
+        case "validating": return 5
+        case "cloud":
+        case "starting-lan": return 15
+        case "broadcast":
+            Boolean second = atomicState.broadcastStage == "second"
+            return bandPercent(second ? 60 : 20, second ? 75 : 40, broadcastElapsedPercent())
+        case "sweep":
+            Integer within = sweepWithinPercent()
+            String kind = atomicState.sweepKind
+            if (kind == "fast") return bandPercent(40, 60, within)
+            if (kind == "retry") return (safeInt(atomicState.sweepPass) == 2) ? bandPercent(85, 92, within) : bandPercent(75, 85, within)
+            if (kind == "slow") return bandPercent(92, 99, within)
+            return 50
+        default: return null
+    }
+}
+
+// How far through the current broadcast phase's time window we are, 0-100.
+Integer broadcastElapsedPercent() {
+    Long until = (atomicState.broadcastUntil ?: 0L) as Long
+    Long remaining = Math.max(0L, until - now())
+    Long elapsed = Math.max(0L, BROADCAST_DURATION_MS - remaining)
+    Integer pct = Math.floor((elapsed * 100.0) / BROADCAST_DURATION_MS).toInteger()
+    return Math.min(100, Math.max(0, pct))
+}
+
+// How far through the current sweep pass's host list we are, 0-100.
+Integer sweepWithinPercent() {
+    Map stats = atomicState.stats ?: emptyStats()
+    Integer sent = (stats.sweepSent ?: 0) as Integer
+    Integer total = (stats.sweepTotal ?: 0) as Integer
+    if (total <= 0) return 0
+    Integer pct = Math.floor((sent * 100.0) / total).toInteger()
+    return Math.min(100, Math.max(0, pct))
+}
+
+// Maps a 0-100 "how far through this sub-phase" fraction onto its overall [from, to] percentage band.
+Integer bandPercent(Integer from, Integer to, Integer withinPercent) {
+    Integer within = withinPercent ?: 0
+    return from + Math.floor(((to - from) * within) / 100.0).toInteger()
 }
 
 String statusHtml() {
