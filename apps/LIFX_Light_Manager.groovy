@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.7
+ * Version: 1.6.8
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.7"
+@Field static final String APP_VERSION = "1.6.8"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -150,6 +150,11 @@ preferences {
 @Field static final Integer FIRMWARE_RESEND_DELAY_MS = 2500
 @Field static final Integer WIFI_CHECK_RESEND_DELAY_MS = 2500
 @Field static final Integer MASTER_RECONCILE_DEBOUNCE_MS = 500
+// The full worst-case discovery chain: validating, cloud/starting-lan, initial broadcast, fast
+// sweep, second broadcast, retry sweep pass 1, retry sweep pass 2, slow sweep - see
+// discoveryStepIndex(). Most runs finish early via allExpectedFound() well before step 8; this
+// is the denominator for the "step Y of Z" progress text, not a claim every run visits all 8.
+@Field static final Integer DISCOVERY_STEP_COUNT = 8
 
 @Field static final Integer PERCENT_MIN = 0
 @Field static final Integer PERCENT_MAX = 100
@@ -244,6 +249,7 @@ void renderMainPageContent(Boolean advanced) {
         } else if (isDiscoveryRunning()) {
             paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data</div>"
             paragraph phaseHtml()
+            paragraph discoveryStepHtml()
         } else if ((atomicState.status ?: "idle") == "complete") {
             paragraph "<div style='font-weight:bold;color:#008000'>Discovery Complete</div>"
         }
@@ -3581,34 +3587,53 @@ Integer clampKelvin(Map row, value) {
 // like the app has hung, when phase is actually progressing normally.
 String phaseHtml() {
     String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
-    Integer pct = estimatedDiscoveryPercent()
-    String suffix = pct != null ? " (estimated ${pct}% complete)" : ""
-    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}${suffix}</div>"
+    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>"
 }
 
-// Rough, honestly-labelled estimate only - discovery moves through phases of uneven, variable
-// length (a slow Cloud API response, an early allExpectedFound() exit skipping later phases
-// entirely, etc. all shift real timing), so this is never meant to be a precise measure, just a
-// better sense of progress than the phase text alone. Only meaningful while a run is in flight -
-// null (no percentage shown) once idle, complete, or in an error/stopped state.
-Integer estimatedDiscoveryPercent() {
+// Which of the DISCOVERY_STEP_COUNT steps in the full worst-case chain we're currently on, or
+// null if no discovery run is in flight. Most runs finish early via allExpectedFound() and never
+// reach the later steps - that's expected, not a bug in this numbering.
+Integer discoveryStepIndex() {
     if (!isDiscoveryRunning()) return null
     switch (atomicState.status ?: "idle") {
-        case "validating": return 5
+        case "validating": return 1
         case "cloud":
-        case "starting-lan": return 15
-        case "broadcast":
-            Boolean second = atomicState.broadcastStage == "second"
-            return bandPercent(second ? 60 : 20, second ? 75 : 40, broadcastElapsedPercent())
+        case "starting-lan": return 2
+        case "broadcast": return (atomicState.broadcastStage == "second") ? 5 : 3
         case "sweep":
-            Integer within = sweepWithinPercent()
             String kind = atomicState.sweepKind
-            if (kind == "fast") return bandPercent(40, 60, within)
-            if (kind == "retry") return (safeInt(atomicState.sweepPass) == 2) ? bandPercent(85, 92, within) : bandPercent(75, 85, within)
-            if (kind == "slow") return bandPercent(92, 99, within)
-            return 50
+            if (kind == "fast") return 4
+            if (kind == "retry") return (safeInt(atomicState.sweepPass) == 2) ? 7 : 6
+            if (kind == "slow") return 8
+            return null
         default: return null
     }
+}
+
+// Rough, honestly-labelled estimate only - discovery moves through steps of uneven, variable
+// length (a slow Cloud API response, an early allExpectedFound() exit skipping later steps
+// entirely, etc. all shift real timing), so this is never meant to be a precise measure, just a
+// better sense of progress than the phase text alone. Starts at 0% on step 1, not partway in.
+// Only meaningful while a run is in flight - null once idle, complete, or in an error/stopped state.
+Integer estimatedDiscoveryPercent() {
+    Integer step = discoveryStepIndex()
+    if (step == null) return null
+    Integer bandFrom = Math.floor(((step - 1) * 100.0) / DISCOVERY_STEP_COUNT).toInteger()
+    Integer bandTo = Math.floor((step * 100.0) / DISCOVERY_STEP_COUNT).toInteger()
+    Integer within = 0
+    if (atomicState.status == "broadcast") within = broadcastElapsedPercent()
+    else if (atomicState.status == "sweep") within = sweepWithinPercent()
+    return bandPercent(bandFrom, bandTo, within)
+}
+
+// The plain-language progress line Gordon asked for - no brackets, shown in blue, distinct from
+// the technical red/green/grey phase text above it. Empty string (nothing rendered) outside an
+// active discovery run, same convention as phaseHtml().
+String discoveryStepHtml() {
+    Integer step = discoveryStepIndex()
+    if (step == null) return ""
+    Integer pct = estimatedDiscoveryPercent() ?: 0
+    return "<div style='color:#0066cc'>Discovery steps at ${pct}% complete, now on step ${step} of ${DISCOVERY_STEP_COUNT}</div>"
 }
 
 // How far through the current broadcast phase's time window we are, 0-100.
@@ -3643,6 +3668,7 @@ String statusHtml() {
     Integer rowsWithIp = curatedWithIpCount()
     Integer rowsMissingIp = Math.max(0, savedRows - rowsWithIp)
     return phaseHtml() +
+        discoveryStepHtml() +
         "<b>Status:</b> ${html(atomicState.status ?: 'idle')}<br/>" +
         "<b>Cloud status:</b> ${html(atomicState.cloudStatus ?: 'not tested')}<br/>" +
         "<b>Saved curated rows:</b> ${savedRows}<br/>" +
