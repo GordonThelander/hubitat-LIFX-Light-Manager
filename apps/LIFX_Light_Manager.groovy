@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.4
+ * Version: 1.6.5
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.4"
+@Field static final String APP_VERSION = "1.6.5"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -327,9 +327,13 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "LAN discovery derives the hub's own /24 subnet automatically (e.g. a hub at 192.168.1.5 sweeps 192.168.1.1-254). Hubitat doesn't expose the hub's actual subnet mask, so this can't be auto-detected precisely - leave this blank unless your LIFX devices are genuinely outside the hub's own /24 (e.g. a larger /23 or /22 network, or a different VLAN)."
             input "subnetPrefixOverride", "text",
                 title: "Optional subnet prefix override",
-                description: "Example: 10.0.1. (with the trailing dot). Leave blank for automatic detection.",
+                description: "Example: 192.168.1. (with the trailing dot). Leave blank for automatic detection.",
                 required: false,
-                submitOnChange: false
+                submitOnChange: true
+            String rawSubnetOverride = subnetPrefixOverride?.toString()?.trim()
+            if (rawSubnetOverride && !normalisedSubnetPrefix(rawSubnetOverride)) {
+                paragraph "<div style='font-weight:bold;color:#cc0000'>'${html(rawSubnetOverride)}' is not a valid subnet prefix - expected three numbers 0-255 separated by dots, e.g. 192.168.1. Falling back to automatic detection until this is corrected.</div>"
+            }
         }
         section("<b>Optional child status polling</b>") {
             paragraph "Polls installed LIFX child devices over LAN for on/off state only. This is intentionally lightweight and does not run firmware discovery or full device refresh."
@@ -359,9 +363,9 @@ void renderMainPageContent(Boolean advanced) {
             if (atomicState.wifiCheckResult) { paragraph atomicState.wifiCheckResult; atomicState.wifiCheckResult = "" }
         }
         section("<b>Background maintenance</b>") {
-            paragraph "Runs Discovery, Firmware check and WiFi signal check automatically once an hour (staggered a few minutes apart), so the device table stays reasonably current without needing to open the app. On by default."
+            paragraph "Runs Discovery automatically once an hour, and Firmware check / WiFi signal check automatically once a day, so the device table stays reasonably current without needing to open the app. On by default."
             input "backgroundMaintenanceOn", "bool",
-                title: "Enable hourly background maintenance",
+                title: "Enable background maintenance",
                 defaultValue: true,
                 required: false,
                 submitOnChange: true
@@ -2411,22 +2415,27 @@ void configureBackgroundMaintenance(Boolean showResult = true) {
     }
 
     if (!backgroundMaintenanceEnabled()) {
-        if (showResult) atomicState.backgroundMaintenanceResult = "Hourly background maintenance is disabled."
+        if (showResult) atomicState.backgroundMaintenanceResult = "Background maintenance is disabled."
         return
     }
 
     try {
-        // DEV BRANCH: offset +5 minutes from production's :00/:15/:30 schedule so this instance's
-        // background maintenance never fires at the same moment as production's against the same
-        // physical fleet - confirmed via live-hub testing that a simultaneous collision causes
-        // Hubitat's own "excessive hub load" throttling, which can silently drop LAN responses
-        // (including IP-change detection) mid-run.
+        // DEV BRANCH: offset +5 minutes from production's schedule so this instance's background
+        // maintenance never fires at the same moment as production's against the same physical
+        // fleet - confirmed via live-hub testing that a simultaneous collision causes Hubitat's own
+        // "excessive hub load" throttling, which can silently drop LAN responses (including
+        // IP-change detection) mid-run. Production's backport equivalent should be 5 minutes earlier
+        // (firmware 04:15, WiFi 05:15) to preserve this - see BACKLOG.md.
+        //
+        // Discovery stays hourly (still the most time-sensitive of the three - it's what detects
+        // IP changes and new devices). Firmware/WiFi checks change far less often per device, so
+        // there's no real value running them every hour - moved to once a day instead.
         schedule("0 5 * * * ?", "scheduledBackgroundDiscovery")
-        schedule("0 20 * * * ?", "scheduledBackgroundFirmwareCheck")
-        schedule("0 35 * * * ?", "scheduledBackgroundWifiCheck")
-        atomicState.backgroundMaintenanceResult = "Hourly background maintenance enabled: Discovery at :05, firmware check at :20, WiFi signal check at :35 past each hour."
+        schedule("0 20 4 * * ?", "scheduledBackgroundFirmwareCheck")
+        schedule("0 20 5 * * ?", "scheduledBackgroundWifiCheck")
+        atomicState.backgroundMaintenanceResult = "Background maintenance enabled: Discovery hourly at :05 past each hour, firmware check daily at 04:20, WiFi signal check daily at 05:20."
     } catch (Throwable t) {
-        atomicState.backgroundMaintenanceResult = "Hourly background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
+        atomicState.backgroundMaintenanceResult = "Background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
         log.warn atomicState.backgroundMaintenanceResult
     }
 }
@@ -4041,16 +4050,31 @@ Integer nextSequence() {
 
 // ---------------- Network/helpers ----------------
 
+// Returns the normalised (trailing-dot) subnet prefix if `value` looks like a genuinely valid one -
+// three dot-separated octets, each 0-255 - or null otherwise. Shared by hubSubnet() (the actual
+// runtime fallback) and the Advanced page's live validation message, so the two checks can never drift apart.
+String normalisedSubnetPrefix(value) {
+    String trimmed = value?.toString()?.trim()
+    if (!trimmed) return null
+    String candidate = trimmed.endsWith(".") ? trimmed : "${trimmed}."
+    if (!(candidate ==~ /^(\d{1,3}\.){3}$/)) return null
+    for (String octet in candidate[0..-2].split(/\./)) {
+        Integer n = safeInt(octet)
+        if (n == null || n < 0 || n > 255) return null
+    }
+    return candidate
+}
+
 String hubSubnet() {
     try {
         // Hubitat's app API doesn't expose the hub's actual subnet mask, so auto-detection below
         // always assumes a /24 - this override exists for the genuine exception (a larger network,
         // a different VLAN, etc.) without pretending to auto-detect something the platform can't tell us.
-        String override = subnetPrefixOverride?.toString()?.trim()
-        if (override) {
-            String candidate = override.endsWith(".") ? override : "${override}."
-            if (candidate ==~ /^(\d{1,3}\.){3}$/) return candidate
-            log.warn "subnetPrefixOverride '${override}' doesn't look like a valid subnet prefix (expected e.g. 10.0.1.) - falling back to automatic detection."
+        String raw = subnetPrefixOverride?.toString()?.trim()
+        if (raw) {
+            String override = normalisedSubnetPrefix(raw)
+            if (override) return override
+            log.warn "subnetPrefixOverride '${raw}' doesn't look like a valid subnet prefix (expected e.g. 192.168.1., each number 0-255) - falling back to automatic detection."
         }
         String hubIp = location.hubs[0]?.localIP ?: location.hub?.localIP
         def m = hubIp =~ /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/
