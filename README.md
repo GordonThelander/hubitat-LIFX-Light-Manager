@@ -1,13 +1,13 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.6.0
+**Version:** 1.6.9
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
 ## What it does
 
 - Uses a LIFX Personal Access Token for discovery and metadata enrichment.
-- Discovers LIFX lights on the local LAN and records their current IP addresses.
+- Discovers LIFX lights on the local LAN and records their current IP addresses, showing live progress - including an estimated % complete - on the main page while a scan is running (not just under Advanced).
 - Maintains a device preparation table showing label, local name, IP address, group, product, firmware version, capabilities, driver mode, cloud connection and status.
 - Supports optional local Hubitat names before child-device creation.
 - Handles Cloud ID to LAN UID mismatches, including the observed `cloud+1` MAC address anomaly edge case.
@@ -19,8 +19,9 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports Master Switch colour and colour-temperature control, applying colour to colour-capable lights and level-only changes to non-colour lights.
 - Supports optional lightweight LAN polling of installed child devices.
 - Supports an on-demand firmware version check over LAN for every saved device, including ones not yet installed as child devices.
-- Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table.
-- Supports optional hourly background maintenance (Discovery, firmware check, WiFi signal check) so the device table stays current without opening the app.
+- Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table where the device reports a genuine dBm reading (some LIFX generations report an alternate signal-quality scale instead, shown as such rather than mislabelled dBm).
+- Supports optional background maintenance: Discovery runs hourly, firmware check and WiFi signal check run once daily, so the device table stays current without opening the app.
+- LAN discovery auto-detects the hub's own /24 subnet, with an optional manual subnet-prefix override preference for networks larger than a /24 or on a different VLAN - an invalid override shows a visible error and falls back to automatic detection.
 - Supports native LIFX **Breathe** and **Pulse** colour effects as Rule Machine Custom Actions, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) below. Turning a light off while an effect is running now cancels it, instead of it silently resuming next time the light comes on.
 - Each local driver has its own configurable default level/colour temperature and an Apply Default command, used both on demand and whenever Off needs to cancel a running Breathe/Pulse effect.
 - The `colorName` attribute (e.g. "Soft White", "Red") stays accurate to the bulb's actual colour, including colour changes made outside Hubitat.
@@ -135,12 +136,12 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.6.0 |
-| App | 1.6.0 |
-| White Mono driver | 1.5.6 |
-| Tunable White driver | 1.5.6 |
-| Colour driver | 1.5.7 |
-| Plus Colour driver | 1.5.7 |
+| Package | 1.6.9 |
+| App | 1.6.9 |
+| White Mono driver | 1.5.7 |
+| Tunable White driver | 1.5.7 |
+| Colour driver | 1.5.8 |
+| Plus Colour driver | 1.5.8 |
 | Master Switch driver | 1.5.4 |
 
 ## Known limitations
@@ -155,6 +156,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
 ## Status
+
+**1.6.9:** External code review follow-up and discovery UX improvements. Nine correctness fixes from an independent code review: a configured default level/colour temperature of exactly 0 no longer silently reverts to 75%/3000K when Off cancels a running effect; Breathe/Pulse fading in from off now actually powers the bulb on, and the switch attribute stays accurate for a bulb that was already on; the Master Switch's aggregate state stays in sync when a child is deleted or when an individual bulb is refreshed/polled, not just on an explicit power command; an unrecognised LIFX product ID now falls back to the conservative White Mono driver instead of being misclassified as full colour+CT; "Clear saved discovery data" now fully resets pending firmware/WiFi check state instead of leaving stale results and timers behind; the LIFX-advertised UDP service port is now actually used instead of always assuming 56700; WiFi signal readings are now correctly classified as dBm, an alternate quality-band encoding some LIFX generations use, or "no signal", instead of always being labelled dBm; a device removed from LIFX Cloud is now reconciled out of the expected/discovered device counts instead of being counted indefinitely. New: an optional manual subnet-prefix override for networks larger than a /24 or on a different VLAN, since Hubitat doesn't expose the hub's actual subnet mask for auto-detection - a friendly example and a visible validation error guide correct entry. Background maintenance: firmware and WiFi signal checks now run once a day instead of every hour, since they change far less often than Discovery does; Discovery itself stays hourly. Discovery now shows live progress - the current phase and an estimated percent/step complete - directly on the main page while a scan is running, not just under Advanced.
 
 **1.6.0:** Correctness and reliability release, plus two new features. Breathe/Pulse effects now properly integrate with Hubitat's own state: starting an effect updates the switch/colour attributes correctly (previously stayed stale), and turning a light off while an effect is running now cancels it instead of letting it silently resume next time the light comes on - touching level, colour or colour temperature while an effect is running also now cleanly stops it, instead of occasionally freezing on a stale colour or causing an unwanted reset later. New: each local driver has its own configurable default level/colour temperature and an Apply Default command, also used when Off needs to cancel a running effect, instead of one fixed value shared by the whole fleet. New: the `colorName` attribute now stays accurate to the bulb's actual colour, including colour changes made outside Hubitat (LIFX app, physical control), instead of being frozen at whatever it showed when the device was first created. Master Switch colour and colour-temperature commands no longer force every bulb in the fleet to a single shared brightness level or reset Tunable White bulbs' colour temperature - each bulb's own level/colour temperature is preserved, and the same brightness-preservation fix applies to an individual bulb's own built-in colour picker. LAN-only discovery (a device with no LIFX Cloud presence) is now reliably found on every Discovery run, and a device that rejoins LIFX Cloud after being LAN-only no longer risks a duplicate device being created. Several other correctness fixes: a canonical-identity overwrite that could risk a duplicate child device on rediscovery, numeric overflow edge cases in duration/colour-temperature parsing, and a driver-mismatch detection bug. Mobile: the device tables can now be scrolled horizontally instead of being clipped at the screen edge.
 

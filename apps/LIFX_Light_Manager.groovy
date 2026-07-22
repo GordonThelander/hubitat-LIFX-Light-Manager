@@ -1,36 +1,29 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.6.0
+ * Version: 1.6.9
  *
- * 1.6.0 - correctness and reliability release, plus two new features:
- * - Breathe/Pulse effects now properly integrate with Hubitat's own state: starting an effect
- *   updates the switch/colour attributes correctly (previously stayed stale), and turning a light
- *   off while an effect is running now cancels it instead of letting it silently resume next time
- *   the light comes on. Touching level, colour or colour temperature while an effect is running
- *   also now cleanly stops it and clears the leftover effect state, instead of occasionally
- *   freezing on a stale colour or causing an unwanted reset later.
- * - New: each local driver (Colour, Plus Colour, Tunable White, White Mono) has its own
- *   configurable "Default level"/"Default colour temperature" preferences and an Apply Default
- *   command - the same default is also used, per device, when Off needs to cancel a running
- *   effect, instead of one fixed value shared by the whole fleet.
- * - New: the colorName attribute (e.g. "Soft White", "Red") now stays accurate to the bulb's
- *   actual colour, including colour changes made outside Hubitat (LIFX app, physical control) -
- *   previously it was frozen at whatever it showed when the device was first created.
- * - Master Switch colour and colour-temperature commands no longer force every bulb in the fleet
- *   to a single shared brightness level or reset Tunable White bulbs' colour temperature - each
- *   bulb's own level/colour temperature is preserved correctly. The same brightness-preservation
- *   fix applies to an individual bulb's own built-in colour picker.
- * - LAN-only discovery (a device with no LIFX Cloud presence) is now reliably found on every
- *   Discovery run, and a device that rejoins LIFX Cloud after being LAN-only no longer risks a
- *   duplicate device being created.
- * - Several correctness fixes: a canonical-identity overwrite that could risk a duplicate child
- *   device on rediscovery, a couple of numeric overflow edge cases in duration/colour-temperature
- *   parsing, and a driver-mismatch detection bug.
- * - Mobile: the device tables can now be scrolled horizontally instead of being clipped at the
- *   screen edge.
- * - Internal cleanup: removed a large amount of accumulated internal documentation and some
- *   unused code, with no user-facing effect.
+ * 1.6.9 - external code review follow-up and discovery UX improvements:
+ * - Nine correctness fixes from an independent code review: a configured default level/colour
+ *   temperature of exactly 0 no longer silently reverts to 75%/3000K when Off cancels a running
+ *   effect; Breathe/Pulse fading in from off now actually powers the bulb on, and the switch
+ *   attribute stays accurate for a bulb that was already on; the Master Switch's aggregate state
+ *   stays in sync when a child is deleted or when an individual bulb is refreshed/polled, not just
+ *   on an explicit power command; an unrecognised LIFX product ID now falls back to the
+ *   conservative White Mono driver instead of being misclassified as full colour+CT; "Clear saved
+ *   discovery data" now fully resets pending firmware/WiFi check state instead of leaving stale
+ *   results and timers behind; the LIFX-advertised UDP service port is now actually used instead
+ *   of always assuming 56700; WiFi signal readings are now correctly classified as dBm, an
+ *   alternate quality-band encoding some LIFX generations use, or "no signal", instead of always
+ *   being labelled dBm; a device removed from LIFX Cloud is now reconciled out of the expected/
+ *   discovered device counts instead of being counted indefinitely.
+ * - New: an optional manual subnet-prefix override for networks larger than a /24 or on a
+ *   different VLAN, since Hubitat doesn't expose the hub's actual subnet mask for auto-detection -
+ *   a friendly example and a visible validation error guide correct entry.
+ * - Background maintenance: firmware and WiFi signal checks now run once a day instead of every
+ *   hour, since they change far less often than Discovery does; Discovery itself stays hourly.
+ * - Discovery now shows live progress - the current phase and an estimated percent/step complete -
+ *   directly on the main page while a scan is running, not just under Advanced.
  *
  * Full version history: see git log and the README.
  *
@@ -73,7 +66,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.0"
+@Field static final String APP_VERSION = "1.6.9"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -150,6 +143,13 @@ preferences {
 // (RESEND_DELAY + FINISH_DELAY) still wasn't enough - roughly half the fleet was wrongly wiped
 // as unconfirmed in a single run despite every device being genuinely reachable. Widened further
 // to an 8s total budget.
+// Everything from startValidationProbe() through the cloud fetch and (if no known IPs exist yet)
+// straight into the first broadcast pulse runs synchronously within the same request as the
+// Discovery button click - Hubitat only actually pauses for real async scheduling at
+// runInMillis()/runInSeconds() calls. Without this deferral, a first-ever run with nothing to
+// validate would already be several steps in by the time the page ever renders, so the discovery
+// step/percent text would never show its true starting point at all.
+@Field static final Integer DISCOVERY_START_RENDER_DELAY_MS = 100
 @Field static final Integer VALIDATION_PROBE_PACE_MS = 30
 @Field static final Integer VALIDATION_RESEND_DELAY_MS = 3000
 @Field static final Integer VALIDATION_FINISH_DELAY_MS = 5000
@@ -175,6 +175,11 @@ preferences {
 @Field static final Integer FIRMWARE_RESEND_DELAY_MS = 2500
 @Field static final Integer WIFI_CHECK_RESEND_DELAY_MS = 2500
 @Field static final Integer MASTER_RECONCILE_DEBOUNCE_MS = 500
+// The full worst-case discovery chain: validating, cloud/starting-lan, initial broadcast, fast
+// sweep, second broadcast, retry sweep pass 1, retry sweep pass 2, slow sweep - see
+// discoveryStepIndex(). Most runs finish early via allExpectedFound() well before step 8; this
+// is the denominator for the "step Y of Z" progress text, not a claim every run visits all 8.
+@Field static final Integer DISCOVERY_STEP_COUNT = 8
 
 @Field static final Integer PERCENT_MIN = 0
 @Field static final Integer PERCENT_MAX = 100
@@ -268,6 +273,8 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "<div style='font-weight:bold;color:#0066cc'>Validating existing devices...</div>"
         } else if (isDiscoveryRunning()) {
             paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data</div>"
+            paragraph phaseHtml()
+            paragraph discoveryStepHtml()
         } else if ((atomicState.status ?: "idle") == "complete") {
             paragraph "<div style='font-weight:bold;color:#008000'>Discovery Complete</div>"
         }
@@ -348,6 +355,18 @@ void renderMainPageContent(Boolean advanced) {
         section("<b>Advanced status</b>") {
             paragraph statusHtml()
         }
+        section("<b>Network discovery</b>") {
+            paragraph "LAN discovery derives the hub's own /24 subnet automatically (e.g. a hub at 192.168.1.5 sweeps 192.168.1.1-254). Hubitat doesn't expose the hub's actual subnet mask, so this can't be auto-detected precisely - leave this blank unless your LIFX devices are genuinely outside the hub's own /24 (e.g. a larger /23 or /22 network, or a different VLAN)."
+            input "subnetPrefixOverride", "text",
+                title: "Optional subnet prefix override",
+                description: "Example: 192.168.1. (with the trailing dot). Leave blank for automatic detection.",
+                required: false,
+                submitOnChange: true
+            String rawSubnetOverride = subnetPrefixOverride?.toString()?.trim()
+            if (rawSubnetOverride && !normalisedSubnetPrefix(rawSubnetOverride)) {
+                paragraph "<div style='font-weight:bold;color:#cc0000'>'${html(rawSubnetOverride)}' is not a valid subnet prefix - expected three numbers 0-255 separated by dots, e.g. 192.168.1. Falling back to automatic detection until this is corrected.</div>"
+            }
+        }
         section("<b>Optional child status polling</b>") {
             paragraph "Polls installed LIFX child devices over LAN for on/off state only. This is intentionally lightweight and does not run firmware discovery or full device refresh."
             input "lifxStatusPollingEnabled", "bool",
@@ -376,9 +395,9 @@ void renderMainPageContent(Boolean advanced) {
             if (atomicState.wifiCheckResult) { paragraph atomicState.wifiCheckResult; atomicState.wifiCheckResult = "" }
         }
         section("<b>Background maintenance</b>") {
-            paragraph "Runs Discovery, Firmware check and WiFi signal check automatically once an hour (staggered a few minutes apart), so the device table stays reasonably current without needing to open the app. On by default."
+            paragraph "Runs Discovery automatically once an hour, and Firmware check / WiFi signal check automatically once a day, so the device table stays reasonably current without needing to open the app. On by default."
             input "backgroundMaintenanceOn", "bool",
-                title: "Enable hourly background maintenance",
+                title: "Enable background maintenance",
                 defaultValue: true,
                 required: false,
                 submitOnChange: true
@@ -511,7 +530,10 @@ void startCombinedDiscovery() {
     atomicState.cloudStatus = "not tested"
     atomicState.curatedReady = false
     state.sweepQueue = []
-    startValidationProbe()
+    // Deferred (not called directly) so the page render triggered by this very button click shows
+    // the genuine starting point - validating, step 1, 0% - before any real work begins, instead of
+    // racing ahead synchronously (see DISCOVERY_START_RENDER_DELAY_MS).
+    runInMillis(DISCOVERY_START_RENDER_DELAY_MS, "startValidationProbe")
 }
 
 // Before wiping any saved IP/UID data, send a unicast probe to each row's currently-known IP.
@@ -519,6 +541,8 @@ void startCombinedDiscovery() {
 // respond are cleared and handed to the full broadcast/sweep rediscovery cycle. The probe is
 // sent twice (immediate + a follow-up resend) and given a multi-second window, mirroring the
 // resilience of the existing broadcast phase rather than relying on a single quick packet.
+// Called via runInMillis() from startCombinedDiscovery(), not directly.
+@SuppressWarnings("unused")
 void startValidationProbe() {
     Map curated = atomicState.curatedRows ?: [:]
     List<String> knownIps = curated.values()
@@ -664,6 +688,7 @@ void startLanDiscovery() {
 
 void mergeCloudIntoCurated(Map cloud) {
     Map curated = atomicState.curatedRows ?: [:]
+    Set<String> touchedKeys = [] as Set
     cloud.each { id, light ->
         Map c = light as Map
         String uid = normaliseCloudId(id)
@@ -701,8 +726,26 @@ void mergeCloudIntoCurated(Map cloud) {
         row.capability = cloudCapability(row)
         row.driverMode = cloudDriverMode(row)
         row.cloudUpdated = now()
+        // Reappearing after a prior "missing" call clears the flag - a device can legitimately
+        // rejoin LIFX Cloud (re-added to the account, connectivity restored on LIFX's side, etc.).
+        row.cloudMissing = false
         row.status = row.ip ? (row.status ?: "Cloud refreshed - LAN IP retained") : "Cloud refreshed - LAN IP missing"
         curated[key] = row
+        touchedKeys << key
+    }
+    // A device removed from (or no longer visible to) LIFX Cloud never gets touched by the loop
+    // above - only every call site of this function represents a confirmed successful full Cloud
+    // fetch (the single caller only reaches here after a genuine 2xx response), so "not touched
+    // this call" reliably means "no longer in Cloud", not "the fetch was partial/failed". Only
+    // rows already marked genuinely cloud-backed are considered - never touch row.origin itself,
+    // and never delete the row, so an installed child device survives this exactly like every
+    // other reconciliation path in this file already preserves it.
+    curated.each { key, value ->
+        Map row = value as Map
+        if (row.origin == "cloud" && !touchedKeys.contains(key)) {
+            row.cloudMissing = true
+            row.status = row.ip ? "No longer in LIFX Cloud - LAN IP retained" : "No longer in LIFX Cloud - LAN IP missing"
+        }
     }
     atomicState.curatedRows = curated
 }
@@ -1061,8 +1104,17 @@ void clearAllData() {
     atomicState.discoveredRenameResult = ""
     atomicState.statusPollingResult = ""
     atomicState.firmwareCheckResult = ""
+    atomicState.wifiCheckResult = ""
+    atomicState.backgroundMaintenanceResult = ""
     atomicState.rowRemovalResult = ""
     atomicState.recentRowRemovals = [:]
+    // A pending firmware/WiFi resend timer references curatedRows via *CheckedAt comparisons -
+    // if it fires after rows are quickly repopulated, it would apply an old check cycle's
+    // "hasn't responded yet" comparison to the new table. Cancel both and reset their timestamps.
+    try { unschedule("resendFirmwareCheck") } catch (Throwable t) { log.debug "unschedule(resendFirmwareCheck) failed: ${t.message}" }
+    try { unschedule("resendWifiCheck") } catch (Throwable t) { log.debug "unschedule(resendWifiCheck) failed: ${t.message}" }
+    atomicState.firmwareCheckStartedAt = 0L
+    atomicState.wifiCheckStartedAt = 0L
     try { app.removeSetting("selectedChildUids") } catch (Throwable t) { log.debug "app.removeSetting(...) failed: ${t.message}" }
     state.sweepQueue = []
 }
@@ -1078,12 +1130,13 @@ Integer expectedCloudLanDiscoveryCount() {
     Map curated = atomicState.curatedRows ?: [:]
     if (!curated) return 0
     // Cloud-led discovery should stop when all discoverable cloud-backed rows have LAN details.
-    // Offline cloud rows are excluded because they cannot reliably answer LAN probes. LAN-only rows
+    // Offline cloud rows are excluded because they cannot reliably answer LAN probes, and so are
+    // rows mergeCloudIntoCurated() has flagged as no longer present in Cloud at all. LAN-only rows
     // are excluded too - cloudUidForRow() can't tell a real Cloud ID from a LAN MAC repurposed as one
     // by mergeLanOnlyIntoCurated(), so row.origin is the actual signal for "genuinely cloud-backed".
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only"
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && row.cloudMissing != true
     }.size() as Integer
 }
 
@@ -1092,7 +1145,7 @@ Integer discoveredCloudLanCount() {
     if (!curated) return 0
     return curated.values().findAll { item ->
         Map row = item as Map
-        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && ((row.ip ?: '').toString().trim())
+        return cloudUidForRow(row) && row.connected != false && row.origin != "lan-only" && row.cloudMissing != true && ((row.ip ?: '').toString().trim())
     }.size() as Integer
 }
 
@@ -1204,7 +1257,10 @@ def parseLifx(response) {
 
     Map dev = (records[mac] ?: [:]) as Map
     dev.ip = ip
-    dev.port = LIFX_PORT
+    // Only default to LIFX_PORT when no real port has been learned yet - a prior STATE_SERVICE
+    // response (see that case below) may have already recorded the device's actual advertised
+    // port, and every other LAN response for this device shouldn't clobber it back to the default.
+    dev.port = dev.port ?: LIFX_PORT
     dev.mac = mac
     dev.sourceMac = sourceMac
     dev.target = protocolTargetUid
@@ -1257,6 +1313,13 @@ def parseLifx(response) {
     switch (parsed.type as Integer) {
         case LIFX_MSG.STATE_SERVICE:
             stats.service = ((stats.service ?: 0) as Integer) + 1
+            Map service = parseStateServicePayload(parsed.payloadHex)
+            // service 1 == UDP per the LIFX LAN protocol; only trust a genuinely advertised UDP
+            // port. Every real LIFX device advertises 56700 in practice, but this stops a bogus
+            // or non-UDP-service payload from redirecting future packets to the wrong port.
+            if (service.service == 1 && service.port != null && service.port > 0) {
+                dev.port = service.port
+            }
             break
         case LIFX_MSG.STATE_VERSION:
             Map version = parseStateVersion(parsed.payloadHex)
@@ -1309,14 +1372,25 @@ def parseLifx(response) {
             Map wifi = parseWifiInfoPayload(parsed.payloadHex)
             if (c && wifi.rssi != null) {
                 c.wifiRssi = wifi.rssi
+                c.wifiRssiKind = wifi.kind
                 c.wifiCheckedAt = now()
                 def wifiChild = getChildDevice(childDniForRow(c))
                 if (wifiChild) {
                     try {
                         wifiChild.updateDataValue('rssi', wifi.rssi.toString())
-                        wifiChild.sendEvent(name: 'rssi', value: wifi.rssi, unit: 'dBm')
+                        // Only a genuine dBm reading gets the dBm unit label - the alternate
+                        // positive-value quality-band encoding is a different scale entirely.
+                        if (wifi.kind == "dbm") {
+                            wifiChild.sendEvent(name: 'rssi', value: wifi.rssi, unit: 'dBm')
+                        } else {
+                            wifiChild.sendEvent(name: 'rssi', value: wifi.rssi)
+                        }
                     } catch (Throwable t) { log.debug "wifi child data update failed: ${t.message}" }
                 }
+            } else if (c && wifi.noSignal) {
+                // A real check was performed and returned the "no signal" sentinel - still mark
+                // it as checked so the row doesn't look untested, just don't publish a bogus value.
+                c.wifiCheckedAt = now()
             }
             break
         case LIFX_MSG.STATE_GROUP:
@@ -1349,7 +1423,7 @@ def parseLifx(response) {
         String cloudId = cloudMatch.cloudId?.toString() ?: c.id?.toString()
         if (cloudId) {
             c.ip = ip
-            c.port = LIFX_PORT
+            c.port = dev.port
             // Once a row has an installed child device, its lanUid is already the DNI this app
             // committed to (lifx-curated-<lanUid>) - overwriting it here would silently orphan
             // the row from its real installed device the next time a response happens to report
@@ -1428,6 +1502,14 @@ Map parseStateVersion(String payloadHex) {
     [vendor: leU32(payloadHex, 0), product: leU32(payloadHex, 8), version: leU32(payloadHex, 16)]
 }
 
+Map parseStateServicePayload(String payloadHex) {
+    // STATE_SERVICE payload: service(u8) + port(u32).
+    if (!payloadHex || payloadHex.size() < 10) return [:]
+    Integer service = Integer.parseInt(payloadHex.substring(0, 2), 16)
+    Long port = leU32(payloadHex, 2)
+    return [service: service, port: port]
+}
+
 Map parseFirmwarePayload(String payloadHex) {
     // STATE_HOST_FIRMWARE payload: build(u64) + reserved(u64) + minor(u16) + major(u16).
     if (!payloadHex || payloadHex.size() < 40) return [:]
@@ -1440,12 +1522,19 @@ Map parseFirmwarePayload(String payloadHex) {
 Map parseWifiInfoPayload(String payloadHex) {
     // STATE_WIFI_INFO payload: signal(float32) + tx(u32) + rx(u32) + reserved(i16). Only signal
     // is used - it's a raw linear value, not already in dBm, hence the log10 conversion below
-    // (the same conversion community LIFX drivers use for this same field).
+    // (the same conversion community LIFX drivers use for this same field, and the officially
+    // documented LIFX conversion - see lan.developer.lifx.com/docs/information-messages).
     if (!payloadHex || payloadHex.size() < 8) return [:]
     Float signal = leFloat32(payloadHex, 0)
     if (signal == null || signal <= 0f) return [:]
-    Integer rssi = Math.floor(10 * Math.log10(signal) + 0.5).toInteger()
-    return [rssi: rssi]
+    Integer value = Math.floor(10 * Math.log10(signal) + 0.5).toInteger()
+    // LIFX documents three distinct bands for this converted value: negative = a genuine dBm
+    // reading (the normal case), exactly 200 = an explicit "no signal" sentinel (not a real
+    // reading), and small positive values (roughly 4-16+) = an alternate quality-band encoding
+    // some LIFX generations use instead of dBm - must never be displayed/labelled as dBm.
+    if (value == 200) return [rssi: null, noSignal: true]
+    if (value < 0) return [rssi: value, kind: "dbm"]
+    return [rssi: value, kind: "quality"]
 }
 
 
@@ -2363,17 +2452,25 @@ void configureBackgroundMaintenance(Boolean showResult = true) {
     }
 
     if (!backgroundMaintenanceEnabled()) {
-        if (showResult) atomicState.backgroundMaintenanceResult = "Hourly background maintenance is disabled."
+        if (showResult) atomicState.backgroundMaintenanceResult = "Background maintenance is disabled."
         return
     }
 
     try {
+        // Discovery stays hourly (still the most time-sensitive of the three - it's what detects
+        // IP changes and new devices). Firmware/WiFi checks change far less often per device, so
+        // there's no real value running them every hour - moved to once a day instead. Times here
+        // are offset 5 minutes earlier than the dev/test channel's own schedule, so this instance's
+        // background maintenance never fires at the same moment as a side-by-side dev install
+        // against the same physical fleet - confirmed via live-hub testing that a simultaneous
+        // collision causes Hubitat's own "excessive hub load" throttling, which can silently drop
+        // LAN responses (including IP-change detection) mid-run.
         schedule("0 0 * * * ?", "scheduledBackgroundDiscovery")
-        schedule("0 15 * * * ?", "scheduledBackgroundFirmwareCheck")
-        schedule("0 30 * * * ?", "scheduledBackgroundWifiCheck")
-        atomicState.backgroundMaintenanceResult = "Hourly background maintenance enabled: Discovery at :00, firmware check at :15, WiFi signal check at :30 past each hour."
+        schedule("0 15 4 * * ?", "scheduledBackgroundFirmwareCheck")
+        schedule("0 15 5 * * ?", "scheduledBackgroundWifiCheck")
+        atomicState.backgroundMaintenanceResult = "Background maintenance enabled: Discovery hourly at :00 past each hour, firmware check daily at 04:15, WiFi signal check daily at 05:15."
     } catch (Throwable t) {
-        atomicState.backgroundMaintenanceResult = "Hourly background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
+        atomicState.backgroundMaintenanceResult = "Background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
         log.warn atomicState.backgroundMaintenanceResult
     }
 }
@@ -2483,6 +2580,11 @@ void refreshMasterSwitchMembership(masterDevice = null) {
     try { dev.updateDataValue("memberCount", total.toString()) } catch (Throwable t) { log.debug "dev.updateDataValue(...) failed: ${t.message}" }
     try { dev.sendEvent(name: "memberCount", value: total) } catch (Throwable t) { log.debug "sendEvent(memberCount) failed: ${t.message}" }
     try { dev.sendEvent(name: "onMemberCount", value: onCount) } catch (Throwable t) { log.debug "sendEvent(onMemberCount) failed: ${t.message}" }
+    // Membership can change independently of any single command (a child deleted, or added after
+    // this Master Switch already existed) - recompute the aggregate switch state here too, using
+    // the same any-member-on semantics groupChildRefresh() already implements, so e.g. deleting the
+    // last active child doesn't leave the Master Switch stuck showing "on" with memberCount 0.
+    try { dev.sendEvent(name: "switch", value: onCount > 0 ? "on" : "off") } catch (Throwable t) { log.debug "sendEvent(switch) failed: ${t.message}" }
 }
 
 // Individual child commands and parsed LAN responses update that one child's own switch state,
@@ -2761,6 +2863,13 @@ private void sendPowerOnIfNeeded(Map row, child, Integer durationMs = 0) {
     // LIFX tracks power state separately from colour/brightness, so a colour/CT/level command alone
     // won't wake a bulb that's physically off - matching Hue-style "set colour implies on" behaviour
     // requires an explicit power-on packet whenever the light isn't already known to be on.
+    //
+    // Known accepted limitation: this checks Hubitat's cached switch
+    // state, not the bulb's real one. If the light was turned off outside Hubitat since the last
+    // refresh, a subsequent command changes HSBK but won't re-power it. Deliberately not fixed -
+    // sending power-on unconditionally on every command adds a packet each time, and this app has
+    // a documented history of a real hub crash from LAN traffic overload. Consistent with how
+    // colour-mode staleness is already only reconciled on refresh/poll, not every command.
     try {
         if ((child?.currentValue('switch') ?: 'off') != 'on') {
             sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_ON, durationMs))
@@ -2969,7 +3078,7 @@ private Boolean effectActiveAndClear(device) {
 private Integer deviceDefaultLevel(device) {
     try {
         def v = device?.getSetting("defaultLevel")
-        if (v != null) return clampInt(safeInt(v) ?: EFFECT_RESET_LEVEL, PERCENT_MIN, PERCENT_MAX)
+        if (v != null) return clampInt(intOrDefault(v, EFFECT_RESET_LEVEL), PERCENT_MIN, PERCENT_MAX)
     } catch (Throwable t) { log.debug "deviceDefaultLevel() getSetting failed: ${t.message}" }
     return EFFECT_RESET_LEVEL
 }
@@ -2977,7 +3086,7 @@ private Integer deviceDefaultLevel(device) {
 private Integer deviceDefaultKelvin(device) {
     try {
         def v = device?.getSetting("defaultColorTemperature")
-        if (v != null) return safeInt(v) ?: EFFECT_RESET_KELVIN
+        if (v != null) return intOrDefault(v, EFFECT_RESET_KELVIN)
     } catch (Throwable t) { log.debug "deviceDefaultKelvin() getSetting failed: ${t.message}" }
     return EFFECT_RESET_KELVIN
 }
@@ -3243,7 +3352,9 @@ private void runColorEffect(Map row, device, String baseColorName, String target
     Integer baseLevel = intOrDefault(baseBrightness, 100)
     Integer targetLevel = intOrDefault(targetBrightness, 100)
     sendSetColor(row, scalePercentToLifx(base[0]), scalePercentToLifx(base[1]), scalePercentToLifx(baseLevel), baseKelvin, 0)
-    if (baseLevel > 0) sendPowerOnIfNeeded(row, device, 0)
+    // A waveform visits both endpoints, so a 0% base with a brighter target (fading in from off)
+    // still needs power-on - only skip it when the bulb is meant to stay dark the whole cycle.
+    if (baseLevel > 0 || targetLevel > 0) sendPowerOnIfNeeded(row, device, 0)
     List<Integer> payload = buildWaveformPayload(
         scalePercentToLifx(target[0]), scalePercentToLifx(target[1]),
         scalePercentToLifx(targetLevel), clampKelvin(row, target[2]), periodMs, waveform)
@@ -3259,7 +3370,11 @@ private void runColorEffect(Map row, device, String baseColorName, String target
         device?.sendEvent(name: "colorTemperature", value: baseKelvin)
         device?.sendEvent(name: "colorMode", value: "RGB")
         device?.sendEvent(name: "colorName", value: deriveColorName(base[0], base[1], baseKelvin))
-        device?.sendEvent(name: "switch", value: baseLevel > 0 ? "on" : "off")
+        // Either endpoint being bright enough to have triggered power-on above counts as "on" -
+        // and a bulb that was already on before the effect started shouldn't flip to "off" here
+        // just because this particular effect's base level happens to be 0.
+        boolean effectOn = baseLevel > 0 || targetLevel > 0 || device?.currentValue('switch') == 'on'
+        device?.sendEvent(name: "switch", value: effectOn ? "on" : "off")
     } catch (Throwable t) { log.debug "runColorEffect() sendEvent failed: ${t.message}" }
     // Marks this device so Off knows to cancel the waveform (see EFFECT_RESET_LEVEL) before
     // powering off, instead of leaving it to silently resume next time the light is turned on.
@@ -3398,6 +3513,10 @@ def parseChildLifx(response) {
                 child.sendEvent(name: "colorMode", value: saturation > 0 ? "RGB" : "CT")
                 child.sendEvent(name: "colorName", value: deriveColorName(hue100, saturation, kelvin))
             }
+            // A LightState response can reflect a power change made outside Hubitat too (a routine
+            // refresh/poll uses LIGHT_GET, not LIGHT_GET_POWER) - reconcile the Master Switch
+            // aggregate here as well, matching what the LIGHT_STATE_POWER branch below already does.
+            requestMasterStateReconciliation()
         } else if ((parsed.type as Integer) == LIFX_MSG.LIGHT_STATE_POWER) {
             Integer power = leU16(parsed.payloadHex, 0)
             child.sendEvent(name: "switch", value: power > 0 ? "on" : "off")
@@ -3490,14 +3609,94 @@ Integer clampKelvin(Map row, value) {
 
 // ---------------- UI rendering ----------------
 
+// Shared by statusHtml() (the full Advanced status block) and the main page's live discovery
+// message, so the same red/green/grey phase line shows in both places instead of only being
+// visible after expanding Advanced - without it there, discovery running >2-3 minutes can look
+// like the app has hung, when phase is actually progressing normally.
+String phaseHtml() {
+    String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
+    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>"
+}
+
+// Which of the DISCOVERY_STEP_COUNT steps in the full worst-case chain we're currently on, or
+// null if no discovery run is in flight. Most runs finish early via allExpectedFound() and never
+// reach the later steps - that's expected, not a bug in this numbering.
+Integer discoveryStepIndex() {
+    if (!isDiscoveryRunning()) return null
+    switch (atomicState.status ?: "idle") {
+        case "validating": return 1
+        case "cloud":
+        case "starting-lan": return 2
+        case "broadcast": return (atomicState.broadcastStage == "second") ? 5 : 3
+        case "sweep":
+            String kind = atomicState.sweepKind
+            if (kind == "fast") return 4
+            if (kind == "retry") return (safeInt(atomicState.sweepPass) == 2) ? 7 : 6
+            if (kind == "slow") return 8
+            return null
+        default: return null
+    }
+}
+
+// Rough, honestly-labelled estimate only - discovery moves through steps of uneven, variable
+// length (a slow Cloud API response, an early allExpectedFound() exit skipping later steps
+// entirely, etc. all shift real timing), so this is never meant to be a precise measure, just a
+// better sense of progress than the phase text alone. Starts at 0% on step 1, not partway in.
+// Only meaningful while a run is in flight - null once idle, complete, or in an error/stopped state.
+Integer estimatedDiscoveryPercent() {
+    Integer step = discoveryStepIndex()
+    if (step == null) return null
+    Integer bandFrom = Math.floor(((step - 1) * 100.0) / DISCOVERY_STEP_COUNT).toInteger()
+    Integer bandTo = Math.floor((step * 100.0) / DISCOVERY_STEP_COUNT).toInteger()
+    Integer within = 0
+    if (atomicState.status == "broadcast") within = broadcastElapsedPercent()
+    else if (atomicState.status == "sweep") within = sweepWithinPercent()
+    return bandPercent(bandFrom, bandTo, within)
+}
+
+// The plain-language progress line Gordon asked for - no brackets, shown in blue, distinct from
+// the technical red/green/grey phase text above it. Empty string (nothing rendered) outside an
+// active discovery run, same convention as phaseHtml().
+String discoveryStepHtml() {
+    Integer step = discoveryStepIndex()
+    if (step == null) return ""
+    Integer pct = estimatedDiscoveryPercent() ?: 0
+    return "<div style='color:#0066cc'>Discovery steps at ${pct}% complete, now on step ${step} of ${DISCOVERY_STEP_COUNT}</div>"
+}
+
+// How far through the current broadcast phase's time window we are, 0-100.
+Integer broadcastElapsedPercent() {
+    Long until = (atomicState.broadcastUntil ?: 0L) as Long
+    Long remaining = Math.max(0L, until - now())
+    Long elapsed = Math.max(0L, BROADCAST_DURATION_MS - remaining)
+    Integer pct = Math.floor((elapsed * 100.0) / BROADCAST_DURATION_MS).toInteger()
+    return Math.min(100, Math.max(0, pct))
+}
+
+// How far through the current sweep pass's host list we are, 0-100.
+Integer sweepWithinPercent() {
+    Map stats = atomicState.stats ?: emptyStats()
+    Integer sent = (stats.sweepSent ?: 0) as Integer
+    Integer total = (stats.sweepTotal ?: 0) as Integer
+    if (total <= 0) return 0
+    Integer pct = Math.floor((sent * 100.0) / total).toInteger()
+    return Math.min(100, Math.max(0, pct))
+}
+
+// Maps a 0-100 "how far through this sub-phase" fraction onto its overall [from, to] percentage band.
+Integer bandPercent(Integer from, Integer to, Integer withinPercent) {
+    Integer within = withinPercent ?: 0
+    return from + Math.floor(((to - from) * within) / 100.0).toInteger()
+}
+
 String statusHtml() {
     updateMatchStats()
     Map stats = atomicState.stats ?: emptyStats()
     Integer savedRows = curatedRowCount()
     Integer rowsWithIp = curatedWithIpCount()
     Integer rowsMissingIp = Math.max(0, savedRows - rowsWithIp)
-    String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
-    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>" +
+    return phaseHtml() +
+        discoveryStepHtml() +
         "<b>Status:</b> ${html(atomicState.status ?: 'idle')}<br/>" +
         "<b>Cloud status:</b> ${html(atomicState.cloudStatus ?: 'not tested')}<br/>" +
         "<b>Saved curated rows:</b> ${savedRows}<br/>" +
@@ -3542,7 +3741,10 @@ String curatedTableHtml() {
         String productDisplay = r.productName ?: r.productIdentifier ?: (r.lanProduct ? "LAN product ${r.lanProduct}" : "")
         b << cell(productDisplay, 5)
         b << cell(r.firmwareVersion ?: "")
-        b << cell(r.wifiRssi != null ? "${r.wifiRssi} dBm" : "")
+        // Default to dBm unless explicitly flagged otherwise - a row whose wifiRssi was cached by
+        // pre-1.6.3 code has no wifiRssiKind at all (that field didn't exist yet), and every one of
+        // those cached values is a genuine dBm reading, not the rare alternate quality-band encoding.
+        b << cell(r.wifiRssi != null ? (r.wifiRssiKind == "quality" ? "${r.wifiRssi} (signal quality)" : "${r.wifiRssi} dBm") : "")
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
         b << cell(r.status ?: (r.ip ? "LAN IP saved" : "LAN IP missing"), 9)
         b << "</tr>"
@@ -3891,7 +4093,11 @@ String driverModeForProduct(value) {
     if (p in [10,11,18,19,51,61,66,82,85,87,88,100,101]) return "Switch + level"
     if (p in [39,50,60,81,96]) return "Switch + level + colour temperature"
     if (p in [29,30,45,46,64,65,109,110,111]) return "Switch + level + colour + CT + IR"
-    return "Switch + level + colour + CT"
+    // An unmapped product ID is a genuine unknown (a future product, or even a non-light LIFX
+    // device) - don't guess full colour+CT capability from nothing. "Unknown" doesn't match any
+    // of driverTypeForRow()'s hasRealColour/ctOnly substrings, so it falls through to that
+    // function's own conservative final fallback (White Mono) instead of being promoted to Colour.
+    return "Unknown"
 }
 
 Integer safeInt(value) {
@@ -3959,8 +4165,32 @@ Integer nextSequence() {
 
 // ---------------- Network/helpers ----------------
 
+// Returns the normalised (trailing-dot) subnet prefix if `value` looks like a genuinely valid one -
+// three dot-separated octets, each 0-255 - or null otherwise. Shared by hubSubnet() (the actual
+// runtime fallback) and the Advanced page's live validation message, so the two checks can never drift apart.
+String normalisedSubnetPrefix(value) {
+    String trimmed = value?.toString()?.trim()
+    if (!trimmed) return null
+    String candidate = trimmed.endsWith(".") ? trimmed : "${trimmed}."
+    if (!(candidate ==~ /^(\d{1,3}\.){3}$/)) return null
+    for (String octet in candidate[0..-2].split(/\./)) {
+        Integer n = safeInt(octet)
+        if (n == null || n < 0 || n > 255) return null
+    }
+    return candidate
+}
+
 String hubSubnet() {
     try {
+        // Hubitat's app API doesn't expose the hub's actual subnet mask, so auto-detection below
+        // always assumes a /24 - this override exists for the genuine exception (a larger network,
+        // a different VLAN, etc.) without pretending to auto-detect something the platform can't tell us.
+        String raw = subnetPrefixOverride?.toString()?.trim()
+        if (raw) {
+            String override = normalisedSubnetPrefix(raw)
+            if (override) return override
+            log.warn "subnetPrefixOverride '${raw}' doesn't look like a valid subnet prefix (expected e.g. 192.168.1., each number 0-255) - falling back to automatic detection."
+        }
         String hubIp = location.hubs[0]?.localIP ?: location.hub?.localIP
         def m = hubIp =~ /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/
         if (m) return "${m[0][1]}."

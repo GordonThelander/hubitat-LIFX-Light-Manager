@@ -1,9 +1,9 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "1.6.0",
+  "version": "1.6.9",
   "minimumHEVersion": "1.0.0",
-  "dateReleased": "2026-07-21",
+  "dateReleased": "2026-07-22",
   "releaseNotes": "LIFX Light Manager uses LIFX Cloud and LAN discovery to create locally controllable LIFX lights. It creates Hubitat devices matched to each bulb's real capabilities, handles IP address changes automatically, and checks firmware version and WiFi signal strength. It also exposes native LIFX features such as Infrared control, and Breathe/Pulse colour effects. Full changelog in the README.",
   "apps": [
     {
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.6.0"
+      "version": "1.6.9"
     }
   ],
   "drivers": [
@@ -24,7 +24,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_White_Mono_Driver.groovy",
       "required": true,
-      "version": "1.5.6"
+      "version": "1.5.7"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2002",
@@ -32,7 +32,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Tunable_White_Driver.groovy",
       "required": true,
-      "version": "1.5.6"
+      "version": "1.5.7"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2003",
@@ -40,7 +40,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Colour_Driver.groovy",
       "required": true,
-      "version": "1.5.7"
+      "version": "1.5.8"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af2004",
@@ -48,7 +48,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/drivers/LIFX_Local_Plus_Colour_Driver.groovy",
       "required": true,
-      "version": "1.5.7"
+      "version": "1.5.8"
     },
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af3001",

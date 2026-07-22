@@ -1,8 +1,8 @@
 /*
  * LIFX Local Plus Colour
  * Namespace: Hubitat Integrations
- * Version: 1.5.7
- * Parent app: LIFX Light Manager 1.6.0+
+ * Version: 1.5.8
+ * Parent app: LIFX Light Manager 1.6.9+
  * Full version history: see git log and the README.
  * Google Home compatibility notes:
  * - Exposes only standard Hubitat light capabilities for this device type.
@@ -166,6 +166,12 @@ private String fastSetColorPacketHex(Integer hue, Integer saturation, Integer br
     return buildZeroTargetTaggedPacket(102, payload)
 }
 
+// Known accepted limitation: tagged=1 with a zero target is protocol-
+// non-conformant (tagged semantically means broadcast/all-devices) - this relies on IP-level UDP
+// unicast addressing alone to reach the right device. Works reliably in extensive live testing
+// with zero observed cross-device bleed. Deliberately not fixed - a real fix exists (the device's
+// own controlUid data value) but this is the most heavily live-tested path in the app for a
+// currently-theoretical risk.
 private String buildZeroTargetTaggedPacket(Integer messageType, List<Integer> payload = []) {
     Integer size = 36 + (payload?.size() ?: 0)
     List<Integer> bytes = []
