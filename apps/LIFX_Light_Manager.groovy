@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.8
+ * Version: 1.6.9
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.8"
+@Field static final String APP_VERSION = "1.6.9"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -125,6 +125,13 @@ preferences {
 // (RESEND_DELAY + FINISH_DELAY) still wasn't enough - roughly half the fleet was wrongly wiped
 // as unconfirmed in a single run despite every device being genuinely reachable. Widened further
 // to an 8s total budget.
+// Everything from startValidationProbe() through the cloud fetch and (if no known IPs exist yet)
+// straight into the first broadcast pulse runs synchronously within the same request as the
+// Discovery button click - Hubitat only actually pauses for real async scheduling at
+// runInMillis()/runInSeconds() calls. Without this deferral, a first-ever run with nothing to
+// validate would already be several steps in by the time the page ever renders, so the discovery
+// step/percent text would never show its true starting point at all.
+@Field static final Integer DISCOVERY_START_RENDER_DELAY_MS = 100
 @Field static final Integer VALIDATION_PROBE_PACE_MS = 30
 @Field static final Integer VALIDATION_RESEND_DELAY_MS = 3000
 @Field static final Integer VALIDATION_FINISH_DELAY_MS = 5000
@@ -505,7 +512,10 @@ void startCombinedDiscovery() {
     atomicState.cloudStatus = "not tested"
     atomicState.curatedReady = false
     state.sweepQueue = []
-    startValidationProbe()
+    // Deferred (not called directly) so the page render triggered by this very button click shows
+    // the genuine starting point - validating, step 1, 0% - before any real work begins, instead of
+    // racing ahead synchronously (see DISCOVERY_START_RENDER_DELAY_MS).
+    runInMillis(DISCOVERY_START_RENDER_DELAY_MS, "startValidationProbe")
 }
 
 // Before wiping any saved IP/UID data, send a unicast probe to each row's currently-known IP.
@@ -513,6 +523,8 @@ void startCombinedDiscovery() {
 // respond are cleared and handed to the full broadcast/sweep rediscovery cycle. The probe is
 // sent twice (immediate + a follow-up resend) and given a multi-second window, mirroring the
 // resilience of the existing broadcast phase rather than relying on a single quick packet.
+// Called via runInMillis() from startCombinedDiscovery(), not directly.
+@SuppressWarnings("unused")
 void startValidationProbe() {
     Map curated = atomicState.curatedRows ?: [:]
     List<String> knownIps = curated.values()
