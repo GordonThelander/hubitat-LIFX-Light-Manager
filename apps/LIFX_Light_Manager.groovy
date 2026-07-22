@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.3
+ * Version: 1.6.4
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.3"
+@Field static final String APP_VERSION = "1.6.4"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -3617,7 +3617,10 @@ String curatedTableHtml() {
         String productDisplay = r.productName ?: r.productIdentifier ?: (r.lanProduct ? "LAN product ${r.lanProduct}" : "")
         b << cell(productDisplay, 5)
         b << cell(r.firmwareVersion ?: "")
-        b << cell(r.wifiRssi != null ? (r.wifiRssiKind == "dbm" ? "${r.wifiRssi} dBm" : "${r.wifiRssi} (signal quality)") : "")
+        // Default to dBm unless explicitly flagged otherwise - a row whose wifiRssi was cached by
+        // pre-1.6.3 code has no wifiRssiKind at all (that field didn't exist yet), and every one of
+        // those cached values is a genuine dBm reading, not the rare alternate quality-band encoding.
+        b << cell(r.wifiRssi != null ? (r.wifiRssiKind == "quality" ? "${r.wifiRssi} (signal quality)" : "${r.wifiRssi} dBm") : "")
         b << cell(r.driverMode ?: cloudDriverMode(r), 7)
         b << cell(r.status ?: (r.ip ? "LAN IP saved" : "LAN IP missing"), 9)
         b << "</tr>"

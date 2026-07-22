@@ -7,11 +7,25 @@ GPT04-01/02, GPT08-01, GPT11-01) are all confirmed live and tracked in `BACKLOG.
 
 ## Setup
 
-1. Confirm the app page subtitle reads `v1.6.3`.
-2. Re-upload all four local drivers (White Mono, Tunable White, Colour, Plus Colour) as well as the
-   app - unlike 1.6.1/1.6.2, this release touches driver files too (a comment-only note on
-   `buildZeroTargetTaggedPacket()` documenting the accepted GPT-06 trade-off, no functional change).
-   Master Switch driver is unchanged.
+1. Confirm the app page subtitle reads `v1.6.4`.
+2. App-file-only - no driver changes since 1.6.3 (which already needed all four local drivers
+   re-uploaded; if you did that for 1.6.3, nothing further to re-upload for drivers here).
+
+## WiFi Signal column mislabelling cached dBm readings as "(signal quality)" (1.6.4, not yet confirmed)
+
+Found live: right after upgrading to 1.6.3, several devices' WiFi Signal column showed values like
+`-48 (signal quality)` - a negative number should never carry that label, only LIFX's alternate
+positive-value encoding should. Root cause: `wifiRssiKind` didn't exist before 1.6.3, so any row
+whose `wifiRssi` was cached by pre-1.6.3 code had no `kind` recorded, and the display logic required
+an exact `"dbm"` match to show the `dBm` suffix - anything else, including a missing field, fell
+through to `"(signal quality)"`. Fixed: the display now defaults to `dBm` unless the row is
+explicitly flagged `"quality"`, so old cached values (all genuinely dBm) display correctly again
+without needing a fresh check.
+
+| # | Test | Steps | Expected |
+|---|------|-------|----------|
+| WIFIKIND-01 | Old cached WiFi readings display as dBm again | Open the Device preparation table without re-running a WiFi check on every device | Every row shows `"-XX dBm"` like before 1.6.3 - none show `"(signal quality)"` unless a fresh check on that specific device genuinely reported the alternate encoding |
+| WIFIKIND-02 | A fresh check still classifies correctly | Run "Check WiFi signal" against a few real bulbs | Values still show as `"-XX dBm"` - every real device in the fleet reports genuine dBm, so `"(signal quality)"` shouldn't appear for any of them |
 
 ## Batch 3 of the external ChatGPT review fixes (1.6.3, not yet confirmed)
 
