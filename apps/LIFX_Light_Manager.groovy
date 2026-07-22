@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.5
+ * Version: 1.6.6
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.5"
+@Field static final String APP_VERSION = "1.6.6"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -243,6 +243,7 @@ void renderMainPageContent(Boolean advanced) {
             paragraph "<div style='font-weight:bold;color:#0066cc'>Validating existing devices...</div>"
         } else if (isDiscoveryRunning()) {
             paragraph "<div style='font-weight:bold;color:#cc0000'>Scanning for new devices, please wait - this typically takes 2-3 minutes, and can take longer the first time or after Clear saved discovery data</div>"
+            paragraph phaseHtml()
         } else if ((atomicState.status ?: "idle") == "complete") {
             paragraph "<div style='font-weight:bold;color:#008000'>Discovery Complete</div>"
         }
@@ -3574,14 +3575,22 @@ Integer clampKelvin(Map row, value) {
 
 // ---------------- UI rendering ----------------
 
+// Shared by statusHtml() (the full Advanced status block) and the main page's live discovery
+// message, so the same red/green/grey phase line shows in both places instead of only being
+// visible after expanding Advanced - without it there, discovery running >2-3 minutes can look
+// like the app has hung, when phase is actually progressing normally.
+String phaseHtml() {
+    String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
+    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>"
+}
+
 String statusHtml() {
     updateMatchStats()
     Map stats = atomicState.stats ?: emptyStats()
     Integer savedRows = curatedRowCount()
     Integer rowsWithIp = curatedWithIpCount()
     Integer rowsMissingIp = Math.max(0, savedRows - rowsWithIp)
-    String colour = ((atomicState.status ?: "idle") == "complete") ? "#008000" : (((atomicState.status ?: "idle") in ["validating", "cloud", "broadcast", "sweep"]) ? "#cc0000" : "#777777")
-    return "<div style='font-weight:bold;color:${colour}'>${html(atomicState.phase ?: 'Idle')}</div>" +
+    return phaseHtml() +
         "<b>Status:</b> ${html(atomicState.status ?: 'idle')}<br/>" +
         "<b>Cloud status:</b> ${html(atomicState.cloudStatus ?: 'not tested')}<br/>" +
         "<b>Saved curated rows:</b> ${savedRows}<br/>" +
