@@ -157,4 +157,6 @@ Tested on Hubitat Elevation platform version 2.5.0.159.
 
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
 
+Meghan Clark's **lifxlan** Python library (MIT licensed) was also consulted as reference material for the LIFX LAN protocol layer during development.
+
 Full version history: see git log and `BACKLOG.md`.
