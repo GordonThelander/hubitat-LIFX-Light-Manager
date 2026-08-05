@@ -153,6 +153,10 @@ Tested on Hubitat Elevation platform version 2.5.0.159.
 - Multizone, Tile, Beam and advanced LIFX effects are not fully supported in this beta.
 - Public release status should retain appropriate attribution and respect upstream licensing constraints.
 
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE). This covers this project's own code; see Attribution below for design inspiration drawn from other work.
+
 ## Attribution
 
 This project takes its structural cues for the LIFX LAN packet layer from Robert Alan Heyes' **LIFX Master** integration (`robheyes`), with the framing and byte-level encoding tracing back to that reference. Everything built on top of that foundation, including Cloud-assisted discovery, UID matching, and the Master Switch model, is this project's own design.
