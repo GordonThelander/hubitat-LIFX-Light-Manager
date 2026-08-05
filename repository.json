@@ -7,13 +7,22 @@
       "name": "LIFX Light Manager",
       "category": "Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-LIFX-Light-Manager/main/packageManifest.json",
-      "description": "Discovers, creates and locally controls LIFX lights, combining LIFX Cloud metadata with local LAN discovery and control."
+      "description": "Discovers, creates and locally controls LIFX lights, combining LIFX Cloud metadata with local LAN discovery and control.",
+      "tags": [
+        "Lights & Switches",
+        "LAN"
+      ]
     },
     {
       "name": "Automation Map",
       "category": "Utility",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/packageManifest.json",
-      "description": "Maps which apps use which devices and in what role, with flowcharts of Rule Machine rules and detection of devices controlled by more than one app."
+      "description": "Maps which apps use which devices and in what role, with flowcharts of Rule Machine rules and detection of devices controlled by more than one app.",
+      "tags": [
+        "Tools & Utilities",
+        "Monitoring"
+      ],
+      "id": "09e55dc6-79f7-4c6e-91e6-48ca516b83bf"
     }
   ]
 }
