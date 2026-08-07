@@ -23,6 +23,17 @@
         "Monitoring"
       ],
       "id": "09e55dc6-79f7-4c6e-91e6-48ca516b83bf"
+    },
+    {
+      "name": "Gmail Notification Gateway",
+      "category": "Notifications",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-gmail-notification-gateway/main/packageManifest.json",
+      "description": "Sends Hubitat notifications as Gmail messages through a Google Apps Script webhook, with no paid messaging service and no Google Cloud project. Recipient addresses stay in Apps Script, so the hub only ever sends a group name. Requires a one-time Google Apps Script setup in your own Google account, described in the documentation.",
+      "tags": [
+        "Notifications",
+        "Cloud"
+      ],
+      "id": "d94eea6f-1314-4921-9f87-04971b3f9279"
     }
   ]
 }
