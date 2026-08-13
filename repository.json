@@ -34,6 +34,17 @@
         "Cloud"
       ],
       "id": "d94eea6f-1314-4921-9f87-04971b3f9279"
+    },
+    {
+      "name": "Presence Manager",
+      "category": "Convenience",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-Presence-Manager/main/packageManifest.json",
+      "description": "Combines Hubitat mobile geolocation presence, phone IP checks and Third Party Services switches into one reliable household occupancy status. Fast to Home, conservative to Away, with a Presence Report (90 day window, CSV export) and Guest Mode.",
+      "tags": [
+        "Presence & Location",
+        "Monitoring"
+      ],
+      "id": "4c666d00-1c4c-44ec-bd30-f3b6a9645374"
     }
   ]
 }
