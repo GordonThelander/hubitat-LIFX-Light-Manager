@@ -4,6 +4,11 @@ Known gaps not yet fixed, tracked here since there's no issue tracker for this p
 
 `dev`'s own version number was bumped from 1.5.19 straight to 1.6.0 on 2026-07-21 to match `main` after the first backport (per Gordon: `main` must never be ahead of `dev`). This time `dev` had already reached 1.6.9 organically through its own normal release cycle before the 2026-07-22 backport, so no separate sync bump was needed - both branches landed on 1.6.9 together.
 
+## Dev 1.6.10 schedule change, 2026-08-23
+
+- Background Discovery changed from hourly at `:05` to once daily at 05:00 (`0 0 5 * * ?`). Live hub diagnostics showed repeated pending-HubAction warnings during every hourly run, including a peak of 29 pending commands and an explicit Hubitat error advising that app 2695 be disabled. Firmware and WiFi checks remain daily at 04:20 and 05:20 on `dev`.
+- Temporary test caveat: production 1.6.9 still runs Discovery hourly at `:00`, so a side-by-side production instance will coincide with this dev job at 05:00 until the daily schedule is also promoted to `main`.
+
 ## External ChatGPT review of 1.6.0 (verified against code 2026-07-21) - all 11 findings resolved
 
 Tagged `GPT-01` through `GPT-11` to avoid colliding with the original report's `F-01`-`F-14` numbering. Every item was independently traced through the actual code before being added here. Nine are fixed and confirmed/awaiting live-hub confirmation (see below); two (GPT-02, GPT-06) were deliberate accept-as-is decisions, documented in code rather than fixed:

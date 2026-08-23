@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.6.9",
+  "version": "1.6.10",
   "minimumHEVersion": "1.0.0",
-  "dateReleased": "2026-07-22",
-  "releaseNotes": "Private test channel tracking the dev branch. Installs alongside the production LIFX Light Manager app under a separate namespace/DNI prefix so it can be tested against real hardware without touching production devices or automations. Not for general installation.",
+  "dateReleased": "2026-08-23",
+  "releaseNotes": "1.6.10 dev: reduces automatic background Discovery from hourly at :05 to once daily at 05:00 after live hub diagnostics showed repeated pending-HubAction queue pressure. Firmware and WiFi checks remain daily at 04:20 and 05:20. Private test channel, not for general installation.",
   "apps": [
     {
       "id": "933b672d-2ad1-4dc6-943a-11b45f016cd2",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.6.9"
+      "version": "1.6.10"
     }
   ],
   "drivers": [

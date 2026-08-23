@@ -1,7 +1,7 @@
 /*
  * LIFX Light Manager (Dev)
  * Namespace: Hubitat Integrations
- * Version: 1.6.9
+ * Version: 1.6.10
  *
  * DEV BRANCH: renamed app/driver/DNI namespace so this can be installed and removed
  * freely alongside the production "LIFX Light Manager" app on the same hub, against
@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.9"
+@Field static final String APP_VERSION = "1.6.10"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -377,7 +377,7 @@ void renderMainPageContent(Boolean advanced) {
             if (atomicState.wifiCheckResult) { paragraph atomicState.wifiCheckResult; atomicState.wifiCheckResult = "" }
         }
         section("<b>Background maintenance</b>") {
-            paragraph "Runs Discovery automatically once an hour, and Firmware check / WiFi signal check automatically once a day, so the device table stays reasonably current without needing to open the app. On by default."
+            paragraph "Runs Discovery automatically once a day at 05:00, with Firmware and WiFi signal checks also running once a day, so the device table stays reasonably current without needing to open the app. On by default."
             input "backgroundMaintenanceOn", "bool",
                 title: "Enable background maintenance",
                 defaultValue: true,
@@ -2439,20 +2439,16 @@ void configureBackgroundMaintenance(Boolean showResult = true) {
     }
 
     try {
-        // DEV BRANCH: offset +5 minutes from production's schedule so this instance's background
-        // maintenance never fires at the same moment as production's against the same physical
-        // fleet - confirmed via live-hub testing that a simultaneous collision causes Hubitat's own
-        // "excessive hub load" throttling, which can silently drop LAN responses (including
-        // IP-change detection) mid-run. Production's backport equivalent should be 5 minutes earlier
-        // (firmware 04:15, WiFi 05:15) to preserve this - see BACKLOG.md.
+        // DEV BRANCH: firmware and WiFi remain offset +5 minutes from production so those jobs do
+        // not hit the same physical fleet simultaneously. Discovery now runs once daily at 05:00
+        // to prevent the repeated HubAction queue pressure observed from hourly discovery. Until
+        // production receives the same daily schedule, its existing hourly :00 run will coincide
+        // with dev at 05:00; this temporary dev-test condition is recorded in BACKLOG.md.
         //
-        // Discovery stays hourly (still the most time-sensitive of the three - it's what detects
-        // IP changes and new devices). Firmware/WiFi checks change far less often per device, so
-        // there's no real value running them every hour - moved to once a day instead.
-        schedule("0 5 * * * ?", "scheduledBackgroundDiscovery")
+        schedule("0 0 5 * * ?", "scheduledBackgroundDiscovery")
         schedule("0 20 4 * * ?", "scheduledBackgroundFirmwareCheck")
         schedule("0 20 5 * * ?", "scheduledBackgroundWifiCheck")
-        atomicState.backgroundMaintenanceResult = "Background maintenance enabled: Discovery hourly at :05 past each hour, firmware check daily at 04:20, WiFi signal check daily at 05:20."
+        atomicState.backgroundMaintenanceResult = "Background maintenance enabled: Discovery daily at 05:00, firmware check daily at 04:20, WiFi signal check daily at 05:20."
     } catch (Throwable t) {
         atomicState.backgroundMaintenanceResult = "Background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
         log.warn atomicState.backgroundMaintenanceResult
