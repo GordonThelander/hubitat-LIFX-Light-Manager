@@ -1,6 +1,6 @@
 # LIFX Light Manager for Hubitat
 
-**Version:** 1.6.9
+**Version:** 1.6.10
 
 LIFX Light Manager is a Hubitat app and driver package for discovering, creating and locally controlling LIFX lights. It combines LIFX Cloud metadata with local LAN discovery so devices can be named and classified accurately, then controlled locally over the network after child devices are created.
 
@@ -20,7 +20,7 @@ LIFX Light Manager is a Hubitat app and driver package for discovering, creating
 - Supports optional lightweight LAN polling of installed child devices.
 - Supports an on-demand firmware version check over LAN for every saved device, including ones not yet installed as child devices.
 - Supports an on-demand WiFi signal strength check over LAN, shown in dBm in the device preparation table where the device reports a genuine dBm reading (some LIFX generations report an alternate signal-quality scale instead, shown as such rather than mislabelled dBm).
-- Supports optional background maintenance: Discovery runs hourly, firmware check and WiFi signal check run once daily, so the device table stays current without opening the app.
+- Supports optional background maintenance: Discovery runs daily at 05:00, while firmware and WiFi signal checks also run once daily, so the device table stays current without opening the app.
 - LAN discovery auto-detects the hub's own /24 subnet, with an optional manual subnet-prefix override preference for networks larger than a /24 or on a different VLAN - an invalid override shows a visible error and falls back to automatic detection.
 - Supports native LIFX **Breathe** and **Pulse** colour effects as Rule Machine Custom Actions, see [Breathe / Pulse colour effects](#breathe--pulse-colour-effects) below. Turning a light off while an effect is running now cancels it, instead of it silently resuming next time the light comes on.
 - Each local driver has its own configurable default level/colour temperature and an Apply Default command, used both on demand and whenever Off needs to cancel a running Breathe/Pulse effect.
@@ -136,8 +136,8 @@ Updating the selected child refreshes the stored device data and the visible `La
 
 | Component | Version |
 |---|---|
-| Package | 1.6.9 |
-| App | 1.6.9 |
+| Package | 1.6.10 |
+| App | 1.6.10 |
 | White Mono driver | 1.5.7 |
 | Tunable White driver | 1.5.7 |
 | Colour driver | 1.5.8 |
@@ -158,6 +158,8 @@ This project takes its structural cues for the LIFX LAN packet layer from Robert
 Meghan Clark's **lifxlan** Python library (MIT licensed) was also consulted as reference material for the LIFX LAN protocol layer during development.
 
 ## Status
+
+**1.6.10:** Background Discovery now runs once daily at 05:00 instead of hourly, making routine maintenance gentler on the hub. Discovery can still be started manually whenever a new light or network change needs to be found sooner. Firmware and WiFi checks remain daily at 04:15 and 05:15.
 
 **1.6.9:** External code review follow-up and discovery UX improvements. Nine correctness fixes from an independent code review: a configured default level/colour temperature of exactly 0 no longer silently reverts to 75%/3000K when Off cancels a running effect; Breathe/Pulse fading in from off now actually powers the bulb on, and the switch attribute stays accurate for a bulb that was already on; the Master Switch's aggregate state stays in sync when a child is deleted or when an individual bulb is refreshed/polled, not just on an explicit power command; an unrecognised LIFX product ID now falls back to the conservative White Mono driver instead of being misclassified as full colour+CT; "Clear saved discovery data" now fully resets pending firmware/WiFi check state instead of leaving stale results and timers behind; the LIFX-advertised UDP service port is now actually used instead of always assuming 56700; WiFi signal readings are now correctly classified as dBm, an alternate quality-band encoding some LIFX generations use, or "no signal", instead of always being labelled dBm; a device removed from LIFX Cloud is now reconciled out of the expected/discovered device counts instead of being counted indefinitely. New: an optional manual subnet-prefix override for networks larger than a /24 or on a different VLAN, since Hubitat doesn't expose the hub's actual subnet mask for auto-detection - a friendly example and a visible validation error guide correct entry. Background maintenance: firmware and WiFi signal checks now run once a day instead of every hour, since they change far less often than Discovery does; Discovery itself stays hourly. Discovery now shows live progress - the current phase and an estimated percent/step complete - directly on the main page while a scan is running, not just under Advanced.
 

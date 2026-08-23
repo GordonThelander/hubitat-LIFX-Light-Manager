@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager",
   "author": "Gordon Thelander",
-  "version": "1.6.9",
+  "version": "1.6.10",
   "minimumHEVersion": "1.0.0",
-  "dateReleased": "2026-07-22",
-  "releaseNotes": "LIFX Light Manager uses LIFX Cloud and LAN discovery to create locally controllable LIFX lights. It creates Hubitat devices matched to each bulb's real capabilities, handles IP address changes automatically, and checks firmware version and WiFi signal strength. It also exposes native LIFX features such as Infrared control, and Breathe/Pulse colour effects. Full changelog in the README.",
+  "dateReleased": "2026-08-23",
+  "releaseNotes": "1.6.10 makes background discovery gentler on your hub by running it once a day at 05:00 instead of every hour. You can still press Discovery at any time after adding a light or changing your network. Daily firmware and WiFi checks continue as before.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.6.9"
+      "version": "1.6.10"
     }
   ],
   "drivers": [

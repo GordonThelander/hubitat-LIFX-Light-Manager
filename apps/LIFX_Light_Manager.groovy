@@ -1,7 +1,13 @@
 /*
  * LIFX Light Manager
  * Namespace: Hubitat Integrations
- * Version: 1.6.9
+ * Version: 1.6.10
+ *
+ * 1.6.10 - background Discovery load reduction:
+ * - Automatic background Discovery now runs once daily at 05:00 instead of hourly. Live hub
+ *   diagnostics showed repeated pending-HubAction warnings during hourly runs, including a peak
+ *   of 29 pending commands. Manual Discovery remains available whenever a new light or IP change
+ *   needs to be detected sooner. Firmware and WiFi checks remain daily at 04:15 and 05:15.
  *
  * 1.6.9 - external code review follow-up and discovery UX improvements:
  * - Nine correctness fixes from an independent code review: a configured default level/colour
@@ -66,7 +72,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.9"
+@Field static final String APP_VERSION = "1.6.10"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -191,10 +197,10 @@ preferences {
     "resendValidationProbe", "finishValidationProbe", "broadcastPulse", "processSweepBatch"
 ].asImmutable()
 
-// Background maintenance jobs are staggered within the hour (0/15/30 past) rather than firing
-// together, since discovery alone can legitimately take several minutes worst-case (see
-// STALE_RUN_THRESHOLD_MS above) - starting firmware/WiFi checks mid-discovery would just add to
-// the same outbound command budget discovery is already using.
+// Background maintenance jobs run once daily. Firmware, Discovery and WiFi are staggered at
+// 04:15, 05:00 and 05:15 rather than firing together, since discovery alone can legitimately take
+// several minutes worst-case (see STALE_RUN_THRESHOLD_MS above). Starting another check during
+// discovery would add to the same outbound command budget discovery is already using.
 @Field static final List<String> BACKGROUND_MAINTENANCE_JOBS = [
     "scheduledBackgroundDiscovery", "scheduledBackgroundFirmwareCheck", "scheduledBackgroundWifiCheck"
 ].asImmutable()
@@ -395,7 +401,7 @@ void renderMainPageContent(Boolean advanced) {
             if (atomicState.wifiCheckResult) { paragraph atomicState.wifiCheckResult; atomicState.wifiCheckResult = "" }
         }
         section("<b>Background maintenance</b>") {
-            paragraph "Runs Discovery automatically once an hour, and Firmware check / WiFi signal check automatically once a day, so the device table stays reasonably current without needing to open the app. On by default."
+            paragraph "Keeps your light list up to date with one automatic Discovery each day at 05:00. You can still press Discovery whenever you add a light or change your network. Firmware and WiFi checks also run once a day. On by default."
             input "backgroundMaintenanceOn", "bool",
                 title: "Enable background maintenance",
                 defaultValue: true,
@@ -2457,18 +2463,14 @@ void configureBackgroundMaintenance(Boolean showResult = true) {
     }
 
     try {
-        // Discovery stays hourly (still the most time-sensitive of the three - it's what detects
-        // IP changes and new devices). Firmware/WiFi checks change far less often per device, so
-        // there's no real value running them every hour - moved to once a day instead. Times here
-        // are offset 5 minutes earlier than the dev/test channel's own schedule, so this instance's
-        // background maintenance never fires at the same moment as a side-by-side dev install
-        // against the same physical fleet - confirmed via live-hub testing that a simultaneous
-        // collision causes Hubitat's own "excessive hub load" throttling, which can silently drop
-        // LAN responses (including IP-change detection) mid-run.
-        schedule("0 0 * * * ?", "scheduledBackgroundDiscovery")
+        // Discovery now runs once daily to prevent the repeated HubAction queue pressure observed
+        // from hourly discovery. Firmware and WiFi remain 15 minutes apart at their existing daily
+        // production times. A side-by-side dev 1.6.10 instance also discovers at 05:00, so do not
+        // enable background maintenance on both instances against the same physical fleet.
+        schedule("0 0 5 * * ?", "scheduledBackgroundDiscovery")
         schedule("0 15 4 * * ?", "scheduledBackgroundFirmwareCheck")
         schedule("0 15 5 * * ?", "scheduledBackgroundWifiCheck")
-        atomicState.backgroundMaintenanceResult = "Background maintenance enabled: Discovery hourly at :00 past each hour, firmware check daily at 04:15, WiFi signal check daily at 05:15."
+        atomicState.backgroundMaintenanceResult = "Background maintenance enabled: Discovery daily at 05:00, firmware check daily at 04:15, WiFi signal check daily at 05:15."
     } catch (Throwable t) {
         atomicState.backgroundMaintenanceResult = "Background maintenance could not be scheduled: ${html(safeMessage(t.message))}"
         log.warn atomicState.backgroundMaintenanceResult
