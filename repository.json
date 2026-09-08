@@ -39,7 +39,7 @@
       "name": "Presence Manager",
       "category": "Convenience",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-Presence-Manager/main/packageManifest.json",
-      "description": "Combines Hubitat mobile geolocation presence, phone IP checks and Third Party Services switches into one reliable household occupancy status. Fast to Home, conservative to Away, with a Presence Report (90 day window, CSV export) and Guest Mode.",
+      "description": "Combines your phones' Hubitat mobile app presence, an optional network check per person, and optional Google Home or SmartThings input into one reliable Home/Away status for the household. Built so that one signal briefly dropping out does not make your automations behave as though everyone had left. Tracks up to 10 people, covers visitors with Guest Mode, and keeps 90 days of hours-at-home history per person with CSV export.",
       "tags": [
         "Presence & Location",
         "Monitoring"
