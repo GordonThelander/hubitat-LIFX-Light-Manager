@@ -181,6 +181,26 @@ preferences {
     "scheduledBackgroundDiscovery", "scheduledBackgroundFirmwareCheck", "scheduledBackgroundWifiCheck"
 ].asImmutable()
 
+// Generic metered fan-out for sending the same LIFX message to many devices without holding one
+// execution open for the whole fleet. pauseExecution() between sends keeps the execution occupied
+// the whole time it sleeps - Hubitat's per-app hub-command-queue limiter measures occupied time,
+// not real work, so a burst of pauseExecution-paced sends across a fleet is exactly what trips it
+// (confirmed via live hub log analysis: bursts of "generates excessive hub load" clustered within
+// 1-2 seconds on every poll tick, worse on the daily firmware/WiFi checks). Sending a small batch,
+// then returning and rescheduling via runInMillis() to resume with the next batch, keeps occupancy
+// near zero between batches regardless of fleet size or chosen spacing. jobKey identifies which
+// caller this is so the different fan-outs don't interfere with each other, and so a new one for
+// the same jobKey doesn't start while a previous one is still in flight.
+@Field static final Integer PACED_FANOUT_BATCH_SIZE = 3
+@Field static final Integer PACED_FANOUT_METER_MS = 1500
+@Field static final Map PACED_FANOUT_RESUME_METHODS = [
+    poll: "pacedFanoutStepPoll",
+    firmware: "pacedFanoutStepFirmware",
+    firmwareResend: "pacedFanoutStepFirmwareResend",
+    wifi: "pacedFanoutStepWifi",
+    wifiResend: "pacedFanoutStepWifiResend"
+]
+
 // ---------------- Hubitat lifecycle ----------------
 
 def installed() { initialiseState() }
@@ -2403,25 +2423,96 @@ def pollManagedChildSwitchStatus() {
         return
     }
 
-    Integer sent = 0
-    Integer skipped = 0
-    Long started = now()
-    rows.each { item ->
-        Map row = item as Map
-        if ((row.ip ?: '').toString().trim()) {
-            sendLifxToRow(row, LIFX_MSG.LIGHT_GET_POWER, [], false, true, "parseChildLifx", 1, 0) // on/off status only
-            sent++
-            // Blocks this scheduled cron job (schedule("0 0/N * * * ?")) once per managed light on
-            // every poll tick; total blocking time scales with fleet size.
-            pauseExecution(60)
-        } else {
-            skipped++
-        }
-    }
-
-    atomicState.statusPollingResult = "Last on/off status poll sent to ${sent} child device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update child switch state as they arrive."
-    refreshMasterSwitchMembership()
+    startPacedFanout("poll", rows)
 }
+
+void startPacedFanout(String jobKey, List<Map> rows) {
+    Map pending = (atomicState.pacedFanout ?: [:]) as Map
+    if (pending[jobKey]) {
+        log.debug "startPacedFanout(${jobKey}): a fan-out for this job is already in progress, not starting another."
+        return
+    }
+    List<Map> withIp = rows.findAll { (it.ip ?: '').toString().trim() }
+    Integer skipped = rows.size() - withIp.size()
+    if (!withIp) { finishPacedFanout(jobKey, 0, skipped); return }
+    pending[jobKey] = [remaining: withIp, sent: 0, skipped: skipped]
+    atomicState.pacedFanout = pending
+    pacedFanoutStepFor(jobKey)
+}
+
+private void pacedFanoutStepFor(String jobKey) {
+    Map pending = (atomicState.pacedFanout ?: [:]) as Map
+    Map job = pending[jobKey] as Map
+    if (!job) return
+    List<Map> remaining = (job.remaining ?: []) as List<Map>
+    Integer sent = (job.sent ?: 0) as Integer
+    Integer skipped = (job.skipped ?: 0) as Integer
+
+    List<Map> batch = remaining.take(PACED_FANOUT_BATCH_SIZE)
+    batch.each { row -> sendPacedFanoutMessage(jobKey, row as Map) }
+    sent += batch.size()
+    remaining = remaining.drop(PACED_FANOUT_BATCH_SIZE)
+
+    if (remaining) {
+        pending[jobKey] = [remaining: remaining, sent: sent, skipped: skipped]
+        atomicState.pacedFanout = pending
+        runInMillis(PACED_FANOUT_METER_MS, PACED_FANOUT_RESUME_METHODS[jobKey] as String)
+    } else {
+        pending.remove(jobKey)
+        atomicState.pacedFanout = pending
+        finishPacedFanout(jobKey, sent, skipped)
+    }
+}
+
+private void sendPacedFanoutMessage(String jobKey, Map row) {
+    switch (jobKey) {
+        case "poll":
+            sendLifxToRow(row, LIFX_MSG.LIGHT_GET_POWER, [], false, true, "parseChildLifx", 1, 0) // on/off status only
+            break
+        case "firmware":
+        case "firmwareResend":
+            sendLifx(row.ip.toString(), LIFX_MSG.GET_HOST_FIRMWARE)
+            break
+        case "wifi":
+        case "wifiResend":
+            sendLifx(row.ip.toString(), LIFX_MSG.GET_WIFI_INFO)
+            break
+    }
+}
+
+private void finishPacedFanout(String jobKey, Integer sent, Integer skipped = 0) {
+    switch (jobKey) {
+        case "poll":
+            atomicState.statusPollingResult = "Last on/off status poll sent to ${sent} child device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update child switch state as they arrive."
+            refreshMasterSwitchMembership()
+            break
+        case "firmware":
+            atomicState.firmwareCheckResult = "Firmware check sent to ${sent} device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update the Firmware column as they arrive."
+            if (sent > 0) runInMillis(FIRMWARE_RESEND_DELAY_MS, "resendFirmwareCheck")
+            break
+        case "firmwareResend":
+            atomicState.firmwareCheckResult = "Firmware check resent to ${sent} device${sent == 1 ? '' : 's'} that hadn't responded yet."
+            break
+        case "wifi":
+            atomicState.wifiCheckResult = "WiFi signal check sent to ${sent} device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update the WiFi Signal column as they arrive."
+            if (sent > 0) runInMillis(WIFI_CHECK_RESEND_DELAY_MS, "resendWifiCheck")
+            break
+        case "wifiResend":
+            atomicState.wifiCheckResult = "WiFi signal check resent to ${sent} device${sent == 1 ? '' : 's'} that hadn't responded yet."
+            break
+    }
+}
+
+@SuppressWarnings("unused")
+void pacedFanoutStepPoll() { pacedFanoutStepFor("poll") }
+@SuppressWarnings("unused")
+void pacedFanoutStepFirmware() { pacedFanoutStepFor("firmware") }
+@SuppressWarnings("unused")
+void pacedFanoutStepFirmwareResend() { pacedFanoutStepFor("firmwareResend") }
+@SuppressWarnings("unused")
+void pacedFanoutStepWifi() { pacedFanoutStepFor("wifi") }
+@SuppressWarnings("unused")
+void pacedFanoutStepWifiResend() { pacedFanoutStepFor("wifiResend") }
 
 Boolean backgroundMaintenanceEnabled() {
     try { return backgroundMaintenanceOn == true || backgroundMaintenanceOn?.toString() == "true" } catch (Throwable t) { log.debug "backgroundMaintenanceOn lookup failed: ${t.message}" }
@@ -2483,21 +2574,10 @@ void checkDeviceFirmware() {
     // added to the already carefully-paced discovery flow.
     atomicState.firmwareCheckStartedAt = now()
     List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
-    Integer sent = 0
-    Integer skipped = 0
-    rows.each { row ->
-        if ((row.ip ?: '').toString().trim()) {
-            sendLifx(row.ip.toString(), LIFX_MSG.GET_HOST_FIRMWARE)
-            sent++
-            pauseExecution(60)
-        } else {
-            skipped++
-        }
-    }
-    atomicState.firmwareCheckResult = "Firmware check sent to ${sent} device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update the Firmware column as they arrive."
-    // A single fire-and-forget UDP query per device can drop occasionally, so any row that
-    // hasn't responded by this point gets one automatic resend - not a full retry loop.
-    if (sent > 0) runInMillis(FIRMWARE_RESEND_DELAY_MS, "resendFirmwareCheck")
+    startPacedFanout("firmware", rows)
+    // finishPacedFanout("firmware", ...) schedules resendFirmwareCheck once the batches complete -
+    // a single fire-and-forget UDP query per device can drop occasionally, so any row that hasn't
+    // responded by then gets one automatic resend, not a full retry loop.
 }
 
 @SuppressWarnings("unused")
@@ -2506,11 +2586,7 @@ void resendFirmwareCheck() {
     List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
         .findAll { (it.ip ?: '').toString().trim() && ((it.firmwareCheckedAt ?: 0L) as Long) < startedAt }
     if (!rows) return
-    rows.each { row ->
-        sendLifx(row.ip.toString(), LIFX_MSG.GET_HOST_FIRMWARE)
-        pauseExecution(60)
-    }
-    atomicState.firmwareCheckResult = "Firmware check resent to ${rows.size()} device${rows.size() == 1 ? '' : 's'} that hadn't responded yet."
+    startPacedFanout("firmwareResend", rows)
 }
 
 @SuppressWarnings("unused")
@@ -2519,19 +2595,7 @@ void checkWifiSignal() {
     // only, since WiFi signal isn't available from LIFX Cloud either.
     atomicState.wifiCheckStartedAt = now()
     List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
-    Integer sent = 0
-    Integer skipped = 0
-    rows.each { row ->
-        if ((row.ip ?: '').toString().trim()) {
-            sendLifx(row.ip.toString(), LIFX_MSG.GET_WIFI_INFO)
-            sent++
-            pauseExecution(60)
-        } else {
-            skipped++
-        }
-    }
-    atomicState.wifiCheckResult = "WiFi signal check sent to ${sent} device${sent == 1 ? '' : 's'}${skipped ? "; skipped ${skipped} without IP" : ''}. Responses update the WiFi Signal column as they arrive."
-    if (sent > 0) runInMillis(WIFI_CHECK_RESEND_DELAY_MS, "resendWifiCheck")
+    startPacedFanout("wifi", rows)
 }
 
 @SuppressWarnings("unused")
@@ -2540,11 +2604,7 @@ void resendWifiCheck() {
     List<Map> rows = (atomicState.curatedRows ?: [:]).values().collect { it as Map }
         .findAll { (it.ip ?: '').toString().trim() && ((it.wifiCheckedAt ?: 0L) as Long) < startedAt }
     if (!rows) return
-    rows.each { row ->
-        sendLifx(row.ip.toString(), LIFX_MSG.GET_WIFI_INFO)
-        pauseExecution(60)
-    }
-    atomicState.wifiCheckResult = "WiFi signal check resent to ${rows.size()} device${rows.size() == 1 ? '' : 's'} that hadn't responded yet."
+    startPacedFanout("wifiResend", rows)
 }
 
 void refreshMasterSwitchMembership(masterDevice = null) {
