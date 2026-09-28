@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_Browser__browser_batch",
+      "mcp__Claude_Browser__preview_list",
+      "mcp__hubitat-rules__hub_read_apps_code",
+      "mcp__hubitat-rules__hub_read_devices",
+      "mcp__hubitat-rules__hub_read_rules",
+      "mcp__hubitat-rules__hub_read_variables",
+      "mcp__hubitat-rules__hub_read_diagnostics",
+      "mcp__hubitat-rules__hub_read_files",
+      "mcp__hubitat-rules__hub_read_rooms",
+      "mcp__hubitat-rules__hub_read_dashboards",
+      "mcp__hubitat-rules__hub_get_tool_guide",
+      "mcp__hubitat-rules__hub_get_info",
+      "mcp__hubitat-rules__hub_get_hsm_status",
+      "mcp__hubitat-rules__hub_list_modes",
+      "mcp__hubitat-rules__hub_search_tools",
+      "mcp__hubitat__list_apps",
+      "mcp__hubitat__list_devices",
+      "mcp__hubitat__list_device_events",
+      "mcp__hubitat__get_device",
+      "mcp__hubitat__get_device_state",
+      "mcp__hubitat__list_rooms",
+      "mcp__hubitat__list_modes",
+      "mcp__hubitat__list_scenes",
+      "mcp__hubitat__list_actions",
+      "mcp__hubitat__hubitat_search_devices",
+      "mcp__hubitat__hubitat_get_context_summary",
+      "mcp__hubitat__get_hub_diagnostics",
+      "mcp__ccd_session__mark_chapter",
+      "mcp__ccd_session_mgmt__list_events",
+      "mcp__ccd_session_mgmt__list_sessions",
+      "mcp__ccd_session_mgmt__get_session",
+      "mcp__ccd_session_mgmt__search_session_transcripts"
+    ]
+  }
+}
