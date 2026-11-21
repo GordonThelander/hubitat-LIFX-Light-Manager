@@ -94,6 +94,13 @@ Full detail on each in `TEST_PLAN_1.5.8.md` and git log (README.md's own per-ver
 E-01 through E-12 (architecture hardening: monolith split, canonical device registry, async Cloud HTTP, polling jitter, ACK-based target learning, product registry consolidation, multi-CIDR, etc.) — declined as impractical for a single-user, no-CI, live-hub-only project. Speculative hardening for failure modes that haven't actually occurred isn't worth the regression risk here. Individual items can be revisited if one becomes a real, observed problem.
 
 
-## Open: Master Switch writes an unverified `switch` to every member (found 2026-11-21)
+## Won't fix: Master Switch writes an unverified `switch` to every member (found 2026-11-21, closed 2026-11-22)
 
 The Master Switch's group commands publish `switch: on`/`off` to every child without confirmation, and with status polling off nothing corrects it. 1.6.11 makes that harmless for turning a light on (power-on is no longer gated on it), but the wrong value still reaches dashboards, `onMemberCount` and any rule that branches on whether a LIFX light is on. Not fixed by 1.6.11; stays open.
+
+Closed by Gordon's decision, 2026-11-22: the LIFX lights are used as controlled outputs, not read for status, so a stale
+`switch` does no harm now that 1.6.11 always sends power-on. Rule check: no rule toggles a LIFX bulb. One rule (Indoor
+Lights) checks whether two dining-room bulbs are off, but it polls those bulbs and waits a second first, so it reads fresh
+state; at worst a bulb that misses the poll picks 40% instead of 50% brightness. Reopen if a rule starts branching on, or
+toggling, a LIFX bulb. The fix, if ever needed: one LIGHT_GET_POWER per member after a Master Switch command (11 packets,
+only when the Master Switch is used, no polling).
