@@ -1,10 +1,10 @@
 {
   "packageName": "LIFX Light Manager (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.6.10",
+  "version": "1.6.11",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-08-23",
-  "releaseNotes": "1.6.10 dev: reduces automatic background Discovery from hourly at :05 to once daily at 05:00 after live hub diagnostics showed repeated pending-HubAction queue pressure. Firmware and WiFi checks remain daily at 04:20 and 05:20. Private test channel, not for general installation.",
+  "releaseNotes": "1.6.11 dev: colour, colour-temperature and level commands above zero now always send the power-on packet, whatever Hubitat last recorded for the bulb. With status polling off, a bulb Hubitat wrongly believed was on could take a new colour and stay dark. Behaviour change: any colour, colour-temperature or level command above zero now always turns the bulb on. Private test channel, not for general installation.",
   "apps": [
     {
       "id": "933b672d-2ad1-4dc6-943a-11b45f016cd2",
@@ -14,7 +14,7 @@
       "required": true,
       "oauth": false,
       "primary": true,
-      "version": "1.6.10"
+      "version": "1.6.11"
     }
   ],
   "drivers": [
