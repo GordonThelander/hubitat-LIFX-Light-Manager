@@ -4,7 +4,7 @@
   "version": "1.6.11",
   "minimumHEVersion": "1.0.0",
   "dateReleased": "2026-08-23",
-  "releaseNotes": "1.6.10 makes background discovery gentler on your hub by running it once a day at 05:00 instead of every hour. You can still press Discovery at any time after adding a light or changing your network. Daily firmware and WiFi checks continue as before.",
+  "releaseNotes": "1.6.11 fixes lights that could stay dark when Hubitat thought they were already on (for example after being switched off in the LIFX app). Colour and colour-temperature commands now always send power-on too.",
   "apps": [
     {
       "id": "1f1a7a3b-9c42-4a68-b9d1-12d0d5af1001",
