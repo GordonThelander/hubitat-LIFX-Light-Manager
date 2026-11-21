@@ -48,7 +48,7 @@ preferences {
 
 // Shown as the main page's subtitle (see mainPage()) so the running app's version is visible
 // without opening the code editor. Bump alongside the header comment above on every release.
-@Field static final String APP_VERSION = "1.6.10"
+@Field static final String APP_VERSION = "1.6.11"
 
 @Field static final Integer LIFX_PORT = 56700
 
@@ -2902,18 +2902,17 @@ void sendBulkSetLevel(Integer level, Integer durationMs = 0) {
 private void sendPowerOnIfNeeded(Map row, child, Integer durationMs = 0) {
     // LIFX tracks power state separately from colour/brightness, so a colour/CT/level command alone
     // won't wake a bulb that's physically off - matching Hue-style "set colour implies on" behaviour
-    // requires an explicit power-on packet whenever the light isn't already known to be on.
+    // requires an explicit power-on packet.
     //
-    // Known accepted limitation (GPT-02, see BACKLOG.md): this checks Hubitat's cached switch
-    // state, not the bulb's real one. If the light was turned off outside Hubitat since the last
-    // refresh, a subsequent command changes HSBK but won't re-power it. Deliberately not fixed -
-    // sending power-on unconditionally on every command adds a packet each time, and this app has
-    // a documented history of a real hub crash from LAN traffic overload. Consistent with how
-    // colour-mode staleness is already only reconciled on refresh/poll, not every command.
+    // Sent every time, whatever Hubitat's cached switch says (GPT-02 reversed, 1.6.11, 2026-11-21). With
+    // status polling off, the cached state cannot be known: on 2026-11-21 a Master Switch command left
+    // eleven bulbs cached "on" while two were off, and the Guest Toilet's next colour-temperature command
+    // changed its colour and left it dark while Hubitat reported success. A device whose state cannot be
+    // polled gets the instruction carried out, never skipped on a guess. Cost: one unicast packet per
+    // level/colour/CT command, which are motion- and user-driven, not the discovery broadcasts behind the
+    // earlier overload. Every caller already sends this only for a level above zero.
     try {
-        if ((child?.currentValue('switch') ?: 'off') != 'on') {
-            sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_ON, durationMs))
-        }
+        sendFastSetToRow(row, LIFX_MSG.LIGHT_SET_POWER, buildSetPowerPayload(LIFX_FULL_ON, durationMs))
     } catch (Throwable t) { log.debug "sendPowerOnIfNeeded() failed: ${t.message}" }
 }
 
