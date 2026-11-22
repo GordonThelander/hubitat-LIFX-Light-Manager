@@ -45,6 +45,16 @@
         "Monitoring"
       ],
       "id": "4c666d00-1c4c-44ec-bd30-f3b6a9645374"
+    },
+    {
+      "name": "HAI Engine",
+      "category": "Automations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/HAI-Engine/main/packageManifest.json",
+      "description": "A rule engine for Hubitat with a browser rule editor, an optional AI Rule Assistant and a Rule Machine migration app you turn on when you need it.",
+      "tags": [
+        "Tools & Utilities"
+      ],
+      "id": "4d7a2e91-0c35-4b8f-a6e2-9f1c3b5d7e80"
     }
   ]
 }
